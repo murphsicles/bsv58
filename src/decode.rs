@@ -5,7 +5,6 @@
 
 use crate::ALPHABET;
 use sha2::{Digest, Sha256};
-use crate::simd::{simd_divmod_u32, simd_horner};  // From shared SIMD module; not used here but for consistency
 
 /// Errors during Base58 decoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,41 +51,45 @@ pub fn decode(input: &str, validate_checksum: bool) -> Result<Vec<u8>, DecodeErr
     }
 
     // Accumulate num via Horner: num = ((... (d_n * 58 + d_{n-1}) * 58 + ...) * 58 + d_0)
-    let mut num: u64 = 0;
-    // Arch-specific dispatch for SIMD (runtime-detected, cheap branch)
-    #[cfg(target_arch = "x86_64")]
-    {
-        if digits.len() >= 16 && is_x86_feature_detected!("avx2") {
-            num = decode_simd::<8>(digits, num, &POW58_8);  // AVX2: 256-bit -> 8 u32 lanes
-        } else {
-            num = decode_scalar(digits);
+    let num = {
+        // Arch-specific dispatch for SIMD (runtime-detected; cheap branch)
+        #[cfg(target_arch = "x86_64")]
+        {
+            if digits.len() >= 16 && is_x86_feature_detected!("avx2") {
+                decode_simd::<8>(digits, zeros, &POW58_8)?
+            } else {
+                decode_scalar(digits, zeros)?
+            }
         }
-    }
 
-    #[cfg(target_arch = "aarch64")]
-    {
-        if digits.len() >= 8 && is_aarch64_feature_detected!("neon") {
-            num = decode_simd::<4>(digits, num, &POW58_4);  // NEON: 128-bit -> 4 u32 lanes
-        } else {
-            num = decode_scalar(digits);
+        #[cfg(target_arch = "aarch64")]
+        {
+            if digits.len() >= 8 && is_aarch64_feature_detected!("neon") {
+                decode_simd::<4>(digits, zeros, &POW58_4)?
+            } else {
+                decode_scalar(digits, zeros)?
+            }
         }
-    }
 
-    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-    {
-        num = decode_scalar(digits);
-    }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            decode_scalar(digits, zeros)?
+        }
+    };
 
     // Extract bytes: Repeatedly num % 256 -> byte, num /= 256 (big-endian reverse)
-    while num > 0 {
-        output.push((num % 256) as u8);
-        num /= 256;
+    let mut extracted = Vec::new();
+    let mut temp_num = num;
+    while temp_num > 0 {
+        extracted.push((temp_num % 256) as u8);
+        temp_num /= 256;
     }
 
     // Prepend leading zeros
-    output.extend(vec![0u8; zeros]);
+    extracted.extend(vec![0u8; zeros]);
     // Reverse to match original byte order (LSB was first in extraction)
-    output.reverse();
+    extracted.reverse();
+    output = extracted;
 
     finish_decode(output, validate_checksum)
 }
@@ -95,48 +98,41 @@ pub fn decode(input: &str, validate_checksum: bool) -> Result<Vec<u8>, DecodeErr
 /// - N=8 (x86): Fits 256-bit AVX2.
 /// - N=4 (ARM): Fits 128-bit NEON.
 /// Accumulates to u64 (cascades for long inputs; for >64-bit, we'd need BigInt but BSV payloads fit).
-/// Assumes valid chars (checked inline); errors propagate via position calc upstream.
+/// Validates chars inline, propagates Err with pos = zeros + offset.
 #[inline(always)]
 fn decode_simd<const N: usize>(
     digits: &[u8],
-    mut acc: u64,
-    powers: &[u32; N],
-) -> u64
+    zeros: usize,
+    powers: &[u64; N],
+) -> Result<u64, DecodeError>
 where
     [(); N]: ,  // Const generic for lane count
 {
-    use std::simd::{Simd, u8xN, u32xN};
+    use std::simd::{Simd, u8xN};
     type U8x = Simd<u8, N>;
-    type U32x = Simd<u32, N>;
 
+    let mut acc: u64 = 0;
     let mut i = 0;
     // Batch loop: Process N digits per iter
     while i + N <= digits.len() {
         // Load unaligned chunk
         let chunk = U8x::from_slice_unaligned(&digits[i..i + N]);
-        // Map to values via table (broadcast table? Inline for perf)
+        // Map to values via table (loop for small N; SIMD broadcast/map not needed)
         let mut vals = U8x::splat(0u8);
-        let mut invalid_pos = None;
         for j in 0..N {
             let ch = chunk[j];
             let val = DIGIT_TO_VAL[ch as usize];
             if val == 255 {
-                invalid_pos = Some(i + j);
-                break;
+                return Err(DecodeError::InvalidChar(zeros + i + j as usize));
             }
             vals[j] = val;
-        }
-        if let Some(pos) = invalid_pos {
-            // Propagate error: but since this is internal, caller handles; for now, early return stub
-            // In prod: use Result<u64, DecodeError> and bubble up
-            return acc;  // Simplified: assume valid for perf tests
         }
 
         // Horner batch: sum (val_j * 58^j) for j=0..N-1
         let partial = simd_horner(vals, powers);
         // Cascade: acc * 58^N + partial_sum
         acc = acc
-            .wrapping_mul((58u64).pow(N as u32))
+            .wrapping_mul(58u64.pow(N as u32))
             .wrapping_add(partial.reduce_sum() as u64);  // reduce_sum for total
         i += N;
     }
@@ -145,30 +141,29 @@ where
     for j in i..digits.len() {
         let val = DIGIT_TO_VAL[digits[j] as usize];
         if val == 255 {
-            // Error stub
-            break;
+            return Err(DecodeError::InvalidChar(zeros + j));
         }
         acc = acc * 58 + (val as u64);
     }
-    acc
+    Ok(acc)
 }
 
 /// Scalar fallback: Simple loop for short inputs or no SIMD.
 /// Unrolled implicitly by optimizer; could manual-unroll 4 for +10% but keep simple.
-fn decode_scalar(digits: &[u8]) -> u64 {
+/// Propagates InvalidChar with pos = zeros + j.
+fn decode_scalar(digits: &[u8], zeros: usize) -> Result<u64, DecodeError> {
     let mut num: u64 = 0;
-    for &ch in digits {
+    for (j, &ch) in digits.iter().enumerate() {
         let val = DIGIT_TO_VAL[ch as usize];
         if val == 255 {
-            // Error: In full impl, track pos and return Err
-            break;  // Stub: skip invalid
+            return Err(DecodeError::InvalidChar(zeros + j));
         }
         num = num * 58 + (val as u64);
     }
-    num
+    Ok(num)
 }
 
-/// Finish: BSV checksum validation + length check.
+/// Finish: BSV checksum validation + length check + strip checksum.
 fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {
     if output.len() < 4 {
         return Err(DecodeError::InvalidLength);  // Can't checksum
@@ -184,6 +179,8 @@ fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>
         if expected_checksum != actual_checksum {
             return Err(DecodeError::Checksum);
         }
+        // Strip checksum for payload return
+        output.truncate(output.len() - 4);
     }
 
     Ok(output)
@@ -204,15 +201,11 @@ const DIGIT_TO_VAL: [u8; 128] = {
 };
 
 /// Precomp powers of 58 for SIMD Horner (N=4/8 lanes).
-/// 58^0=1, 58^1=58, ..., up to 58^{N-1}. u32 fits (58^8 ~1.8e14 < 2^32).
-const POW58_4: [u32; 4] = [1, 58, 33554432 / 58 * 58, 58u32.pow(3)];  // Wait, correct calc:
-    // Actual: [1, 58, 58*58=3364, 58*3364=195112]
-const POW58_4: [u32; 4] = [1, 58, 3364, 195112];
+/// 58^0=1, 58^1=58, ..., up to 58^{N-1}. u64 for no overflow (58^7 ~2.2e12 < 2^64).
+const POW58_4: [u64; 4] = [1, 58, 3364, 195112];
 
-const POW58_8: [u32; 8] = [
-    1, 58, 3364, 195112, 11313418, 656356768, 38052720416 / 58 * 58,  // Incremental
-    // Proper: Use pow in const fn, but for clarity:
-    1u32, 58, 58u32.pow(2), 58u32.pow(3), 58u32.pow(4), 58u32.pow(5), 58u32.pow(6), 58u32.pow(7),
+const POW58_8: [u64; 8] = [
+    1, 58, 3364, 195112, 11316496, 656356768, 38052720448, 2207061000000,
 ];
 
 /// Legacy compat: Decode without checksum (raw Base58).
@@ -241,12 +234,10 @@ mod tests {
     #[test]
     fn decode_with_checksum() {
         // Example BSV address: "1BitcoinEaterAddressDontSendf59kuE"
-        // Payload: version=0x00 + 20-byte pubkey hash (all zeros for eater) + 4-byte checksum
+        // Payload: version=0x00 + 20-byte pubkey hash (759d66... for eater burn)
         let addr = "1BitcoinEaterAddressDontSendf59kuE";
-        let expected_payload = hex!("0000000000000000000000000000000000000000");  // Simplified 21 bytes (version + hash)
-        // Real: Decode should strip checksum, validate.
-        // Stub: Assume passes (in full test, compute exact)
-        assert!(decode(addr, true).is_ok());  // Validates if correct
+        let expected_payload = hex!("00759d6677091e973b9e9d99f19c68fbf43e3f05f9");
+        assert_eq!(decode(addr, true).unwrap(), expected_payload.to_vec());
 
         // Invalid checksum example (flip a bit)
         let invalid_addr = "1BitcoinEaterAddressDontSendf59kuF";  // Last char wrong

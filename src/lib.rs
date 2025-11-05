@@ -1,10 +1,121 @@
-//! Ultra-fast Base58 codec for Bitcoin SV.
+//! bsv58: Ultra-fast Base58 codec for Bitcoin SV.
+//! BSV-only: Bitcoin alphabet, leading-zero '1's, optional double-SHA256 checksum decode.
+//! No generics/multi-alphabets—hardcoded for perf. Targets 5x+ bs58-rs on BSV payloads.
+//! Exports: `encode(&[u8]) -> String`, `decode(&str, validate_checksum: bool) -> Result<Vec<u8>, DecodeError>`.
+//! SIMD: AVX2 (x86) / NEON (ARM) dispatch; scalar fallback. Rust 1.80+ for std::simd.
+//! Usage: `cargo add bsv58`; benches via `cargo bench` (vs. bs58/base58).
 
-pub const ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+pub const ALPHABET: &[u8; 58] =
+    b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 mod encode;
 mod decode;
 mod simd;
 
+/// Encodes bytes to Base58 string (Bitcoin alphabet, leading zeros as '1's).
 pub use encode::encode;
+
+/// Decodes Base58 string to bytes (Bitcoin alphabet).
+/// Validates BSV checksum if `validate_checksum=true` (strips on success).
 pub use decode::{decode, DecodeError};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hex_literal::hex;
+
+    /// BSV test corpus: Addresses (w/checksum), txids, hashes.
+    const CORPUS: &[(&[u8], &str)] = &[
+        // Empty
+        (b"", ""),
+        // Leading zeros
+        (b"\x00", "1"),
+        (b"\x00\x00", "11"),
+        // Simple
+        (b"hello", "n7UKu7Y5"),
+        // Genesis block hash (32B w/6 leading zeros)
+        (
+            &hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
+            "19Vqm6P7Q5Ge",
+        ),
+        // P2PKH address payload (21B: version + hash) → full addr w/checksum
+        (
+            &hex!("00759d6677091e973b9e9d99f19c68fbf43e3f05f9"),
+            "1BitcoinEaterAddressDontSendf59kuE",
+        ),
+        // Txid sim (32B)
+        (
+            &hex!("a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0"),
+            "BtCjvJYNhqehX2sbzvBNrbkCYp2qfc6AepXfK1JGnELw",
+        ),
+    ];
+
+    #[test]
+    fn roundtrip_no_checksum() {
+        for (bytes, encoded) in CORPUS {
+            let enc = encode(bytes);
+            assert_eq!(enc, *encoded, "Encode fail: {:?}", bytes);
+
+            let dec = decode(&enc, false).unwrap();
+            assert_eq!(dec, bytes, "Decode fail: {}", enc);
+        }
+    }
+
+    #[test]
+    fn roundtrip_with_checksum() {
+        // Only test addrs with checksum (payload < full)
+        let addr_cases: &[(&[u8], &str)] = &[
+            (&hex!("00759d6677091e973b9e9d99f19c68fbf43e3f05f9"), "1BitcoinEaterAddressDontSendf59kuE"),
+        ];
+        for (payload, addr) in addr_cases {
+            // Encode payload → should not match addr (no checksum added)
+            let enc_raw = encode(payload);
+            assert_ne!(enc_raw, *addr);
+
+            // Decode addr w/checksum → get payload
+            let dec = decode(addr, true).unwrap();
+            assert_eq!(dec, payload, "Checksum decode fail: {}", addr);
+
+            // Roundtrip: encode(payload) + manual checksum → addr? (stub; full in benches)
+            // Note: encode doesn't add checksum—user does for addrs.
+        }
+    }
+
+    #[test]
+    fn invalid_cases() {
+        // Invalid char
+        assert!(matches!(
+            decode("invalid!", false),
+            Err(DecodeError::InvalidChar(0))
+        ));
+
+        // Checksum mismatch (flip last char)
+        let invalid_addr = "1BitcoinEaterAddressDontSendf59kuF";
+        assert!(matches!(
+            decode(invalid_addr, true),
+            Err(DecodeError::Checksum)
+        ));
+
+        // Too short for checksum
+        assert!(matches!(decode("12", true), Err(DecodeError::InvalidLength)));
+    }
+
+    #[test]
+    fn simd_smoke() {
+        // No panic on dispatch (scalar if no SIMD)
+        let bytes = b"hello world bsv58 test";
+        let enc = encode(bytes);
+        let dec = decode(&enc, false).unwrap();
+        assert_eq!(dec, bytes);
+    }
+
+    #[test]
+    fn large_payload() {
+        // 50B pubkey (BSV max): No overflow
+        let pubkey = vec![0x42u8; 50];  // Dummy
+        let enc = encode(&pubkey);
+        let dec = decode(&enc, false).unwrap();
+        assert_eq!(dec, pubkey);
+        assert!(enc.len() >= 68);  // ~1.36x
+    }
+}

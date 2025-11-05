@@ -1,0 +1,20 @@
+[package]
+name = "bsv58"
+version = "0.1.0"
+edition = "2024"
+description = "Ultra-fast Base58 codec for Bitcoin SV"
+license = "Open BSV"
+repository = "https://github.com/murphsicles/bsv58"
+keywords = ["base58", "bitcoin", "bsv", "codec"]
+categories = ["cryptography::encoding"]
+
+[lib]
+name = "bsv58"
+path = "src/lib.rs"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "bench"
+harness = false

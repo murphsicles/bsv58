@@ -1,5 +1,6 @@
 use crate::ALPHABET;
 use std::ptr;
+use crate::simd::{simd_divmod_u32, RECIP};
 
 const VAL_TO_DIGIT: [u8; 58] = [
     b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'A', b'B', b'C', b'D', b'E', b'F', b'G',
@@ -8,74 +9,93 @@ const VAL_TO_DIGIT: [u8; 58] = [
     b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y', b'z',
 ];
 
+#[inline(always)]
 pub fn encode(input: &[u8]) -> String {
     if input.is_empty() {
         return String::new();
     }
 
-    // Exact capacity: len * log(256)/log(58) ≈ len * 1.3652, but +1 for safety
-    let cap = (input.len() as f64 * 1.3652).ceil() as usize + 1;
+    let cap = ((input.len() as f64 * 1.3652).ceil() as usize).max(1);
     let mut output = Vec::with_capacity(cap);
 
-    // Count leading zeros
-    let mut zeros = 0usize;
-    for &b in input {
-        if b != 0 { break; }
-        zeros += 1;
-    }
-    let non_zero_len = input.len() - zeros;
+    let zeros = input.iter().take_while(|&&b| b == 0).count();
+    let non_zero = &input[zeros..];
+    let non_zero_len = non_zero.len();
 
     if non_zero_len == 0 {
         return unsafe { String::from_utf8_unchecked(vec![b'1'; zeros]) };
     }
 
-    // Unsafe zero-copy reverse of non-zero part (big-endian prep)
-    let mut buf = Vec::with_capacity(non_zero_len);
+    // Unsafe reverse copy
+    let mut buf: Vec<u8> = Vec::with_capacity(non_zero_len);
     unsafe {
-        let src = input.as_ptr().add(zeros);
-        ptr::copy_nonoverlapping(src, buf.as_mut_ptr(), non_zero_len);
+        ptr::copy_nonoverlapping(non_zero.as_ptr(), buf.as_mut_ptr(), non_zero_len);
         buf.set_len(non_zero_len);
     }
-    buf.reverse();  // Now process as little-endian for divmod
+    buf.reverse();
 
-    // u64 carry: process up to 8 bytes/iter
-    let mut carry: u64 = 0;
-    let bytes = buf.as_slice();
-
-    // Unrolled loop: process 4 bytes at a time (common chunk for BSV)
-    let mut i = 0;
-    while i + 4 <= bytes.len() {
-        carry = carry.wrapping_mul(256u64.pow(4)) + u64::from_le_bytes([
-            bytes[i], bytes[i+1], bytes[i+2], bytes[i+3], 0, 0, 0, 0
-        ]);
-        for _ in 0..4 {  // Unroll 4 divs
-            output.push(VAL_TO_DIGIT[(carry % 58) as usize]);
-            carry /= 58;
-        }
-        i += 4;
+    // SIMD dispatch
+    if non_zero_len >= 16 && cfg!(target_arch = "x86_64") && std::is_x86_feature_detected!("avx2") {
+        encode_simd(&mut output, &buf);
+    } else {
+        encode_scalar(&mut output, &buf);
     }
 
-    // Tail: remaining bytes
-    for j in i..bytes.len() {
-        carry = carry * 256 + (bytes[j] as u64);
-        output.push(VAL_TO_DIGIT[(carry % 58) as usize]);
-        carry /= 58;
-    }
-
-    // Drain remaining carry
-    while carry > 0 {
-        output.push(VAL_TO_DIGIT[(carry % 58) as usize]);
-        carry /= 58;
-    }
-
-    output.reverse();  // LSB-first to MSB
-
-    // Prepend zeros
+    output.reverse();
     for _ in 0..zeros {
         output.push(b'1');
     }
 
     unsafe { String::from_utf8_unchecked(output) }
+}
+
+#[inline(always)]
+fn encode_simd(output: &mut Vec<u8>, bytes: &[u8]) {
+    let mut carry: u64 = 0;
+    let mut i = 0;
+
+    // Process 16-byte chunks
+    while i + 16 <= bytes.len() {
+        let chunk = u8x16::from_slice_unaligned(&bytes[i..i+16]);
+        let u32_chunk = chunk.cast::<u32>();  // Promote for div
+        let (quot, rem) = simd_divmod_u32(u32_chunk);
+        
+        // Horizontal extract rems to output (LSB first)
+        for j in 0..16 {
+            output.push(VAL_TO_DIGIT[rem[j] as usize]);
+        }
+
+        // Carry quot to next (scalar for simplicity; vectorize if needed)
+        carry = quot.reduce_add() as u64;  // Sum quotients
+        i += 16;
+    }
+
+    // Tail scalar
+    encode_scalar_tail(output, &bytes[i..], carry);
+}
+
+#[inline(always)]
+fn encode_scalar(output: &mut Vec<u8>, bytes: &[u8]) {
+    let mut carry: u64 = 0;
+    for &byte in bytes {
+        carry = carry * 256 + (byte as u64);
+        output.push(VAL_TO_DIGIT[(carry % 58) as usize]);
+        carry /= 58;
+    }
+    encode_scalar_tail(output, &[], carry);
+}
+
+#[inline(always)]
+fn encode_scalar_tail(output: &mut Vec<u8>, tail: &[u8], mut carry: u64) {
+    for &byte in tail {
+        carry = carry * 256 + (byte as u64);
+        output.push(VAL_TO_DIGIT[(carry % 58) as usize]);
+        carry /= 58;
+    }
+    while carry > 0 {
+        output.push(VAL_TO_DIGIT[(carry % 58) as usize]);
+        carry /= 58;
+    }
 }
 
 #[cfg(test)]

@@ -1,0 +1,67 @@
+use crate::ALPHABET;
+use std::ptr;
+
+const VAL_TO_DIGIT: [u8; 58] = [
+    b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'A', b'B', b'C', b'D', b'E', b'F', b'G',
+    b'H', b'J', b'K', b'L', b'M', b'N', b'P', b'Q', b'R', b'S', b'T', b'U', b'V', b'W', b'X', b'Y',
+    b'Z', b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j', b'k', b'm', b'n', b'o', b'p',
+    b'q', b'r', b's', b't', b'u', b'v', b'w', b'x', b'y', b'z',
+];
+
+pub fn encode(input: &[u8]) -> String {
+    if input.is_empty() {
+        return String::new();
+    }
+
+    let mut output = Vec::with_capacity(input.len() * 733 / 1000 + 1);  // log58(256) ≈ 0.733
+
+    // Count leading zeros
+    let mut zeros = 0;
+    for &b in input.iter() {
+        if b != 0 { break; }
+        zeros += 1;
+    }
+
+    // Temp buffer for reversed input (big-endian)
+    let mut buf = Vec::with_capacity(input.len());
+    unsafe {
+        ptr::copy_nonoverlapping(input.as_ptr().add(input.len() - zeros), buf.as_mut_ptr(), input.len() - zeros);
+        buf.set_len(input.len() - zeros);
+    }
+    buf.reverse();  // Now little-endian for divmod
+
+    // Multi-byte divmod: process byte-by-byte for arbitrary len
+    let mut carry = 0u32;
+    for &byte in &buf {
+        carry = carry * 256 + (byte as u32);
+        output.push(VAL_TO_DIGIT[(carry % 58) as usize]);
+        carry /= 58;
+    }
+    while carry > 0 {
+        output.push(VAL_TO_DIGIT[(carry % 58) as usize]);
+        carry /= 58;
+    }
+
+    output.reverse();  // Digits were LSB first
+
+    // Prepend zeros as '1's
+    for _ in 0..zeros {
+        output.push(b'1');
+    }
+
+    unsafe { String::from_utf8_unchecked(output) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hex_literal::hex;
+
+    #[test]
+    fn encode_known() {
+        assert_eq!(encode(&hex!("")), "");
+        assert_eq!(encode(&hex!("00")), "1");
+        assert_eq!(encode(b"hello"), "n7UKu7Y5");
+        assert_eq!(encode(&hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f")), "19Vqm6P7Q5Ge");
+    }
+}

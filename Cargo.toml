@@ -2,7 +2,7 @@
 name = "bsv58"
 version = "0.1.0"
 edition = "2024"
-description = "Ultra-fast Base58 codec for Bitcoin SV"
+description = "Ultra-fast Base58 codec for Bitcoin SV (SIMD x86/ARM)"
 license = "Open BSV"
 repository = "https://github.com/murphsicles/bsv58"
 keywords = ["base58", "bitcoin", "bsv", "codec"]
@@ -16,7 +16,7 @@ path = "src/lib.rs"
 sha2 = "0.10"  # For BSV checksum
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.5", features = ["html_reports"] } # For benchmarking
 hex-literal = "0.4"  # For tests
 
 [[bench]]

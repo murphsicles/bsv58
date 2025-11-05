@@ -12,8 +12,12 @@ categories = ["cryptography::encoding"]
 name = "bsv58"
 path = "src/lib.rs"
 
+[dependencies]
+sha2 = "0.10"  # For BSV checksum
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+hex-literal = "0.4"  # For tests
 
 [[bench]]
 name = "bench"

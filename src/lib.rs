@@ -4,6 +4,7 @@ pub const ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmn
 
 mod encode;
 mod decode;
+mod simd;
 
 pub use encode::encode;
 pub use decode::{decode, DecodeError};

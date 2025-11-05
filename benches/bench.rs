@@ -1,12 +1,14 @@
 //! Benchmarks for bsv58: Microbenchmarks via Criterion.
 //! Targets: Encode/decode on BSV payloads (20-byte hashes, 32-byte txids, 34-char addrs).
-//! Baselines: bs58-rs for 5x claim (add as dev-dep: cargo add bs58 --dev).
+//! Baselines: base58 (control, slower baseline) + bs58 (reference, faster than base58).
+//! Add deps: cargo add base58 --dev (latest ~0.2 as of 2025).
 //! Run: cargo bench --bench bench [-- --save-baselines].
 //! Outputs: GB/s throughput (higher better); HTML reports in target/criterion.
-//! Projections (i9-13900K/M3 Max): bsv58 encode ~6 GB/s (5x bs58 ~1.2 GB/s).
+//! Projections (i9-13900K/M3 Max): bsv58 encode ~6 GB/s (5x bs58 ~1.2 GB/s, 15x base58 ~0.4 GB/s).
 
 use bsv58::{decode, encode};
-use bs58;  // Baseline: cargo add bs58 --dev
+use base58;  // Control: cargo add base58 --dev
+use bs58;    // Reference: cargo add bs58 --dev
 use criterion::{
     black_box, criterion_group, criterion_main, measurement::WallTime, BenchmarkGroup, BenchmarkId,
     Criterion, Throughput,
@@ -25,26 +27,38 @@ fn bsv_samples() -> Vec<(&'static [u8], &'static str)> {
     ]
 }
 
-/// Bench encode: bsv58 vs bs58-rs on samples.
+/// Bench encode: bsv58 vs base58 (control) vs bs58 (reference) on samples.
 fn bench_encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode");
     group.measurement_time(WallTime::new()).throughput(Throughput::Bytes(1));  // Normalize to GB/s
 
     for (bytes, _encoded) in bsv_samples() {
+        let len = bytes.len();
+
         // bsv58
         group.bench_with_id(
-            format!("bsv58_{}B", bytes.len()),
-            BenchmarkId::new("bsv58", bytes.len()),
+            format!("bsv58_{}B", len),
+            BenchmarkId::new("bsv58", len),
             |b, &len| {
                 let data = black_box(&bytes[..len]);
                 b.iter(|| encode(data))
             },
         );
 
-        // bs58-rs baseline
+        // base58 control (slower baseline)
         group.bench_with_id(
-            format!("bs58-rs_{}B", bytes.len()),
-            BenchmarkId::new("bs58-rs", bytes.len()),
+            format!("base58_{}B", len),
+            BenchmarkId::new("base58", len),
+            |b, &len| {
+                let data = black_box(&bytes[..len]);
+                b.iter(|| base58::encode(data))
+            },
+        );
+
+        // bs58 reference (faster than base58)
+        group.bench_with_id(
+            format!("bs58_{}B", len),
+            BenchmarkId::new("bs58", len),
             |b, &len| {
                 let data = black_box(&bytes[..len]);
                 b.iter(|| bs58::encode(data))
@@ -54,26 +68,38 @@ fn bench_encode(c: &mut Criterion) {
     group.finish();
 }
 
-/// Bench decode: bsv58 vs bs58-rs (w/ checksum=false for fair raw compare).
+/// Bench decode: bsv58 vs base58 vs bs58 (w/ checksum=false for fair raw compare).
 fn bench_decode(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode");
     group.measurement_time(WallTime::new()).throughput(Throughput::Bytes(1));
 
     for (_bytes, encoded) in bsv_samples() {
+        let len = encoded.len();
+
         // bsv58
         group.bench_with_id(
-            format!("bsv58_{}chars", encoded.len()),
-            BenchmarkId::new("bsv58", encoded.len()),
+            format!("bsv58_{}chars", len),
+            BenchmarkId::new("bsv58", len),
             |b, &len| {
                 let s = black_box(&encoded[..len]);
-                b.iter(|| decode(s).unwrap())  // No checksum for raw perf
+                b.iter(|| decode(s, false).unwrap())  // No checksum for raw perf
             },
         );
 
-        // bs58-rs baseline
+        // base58 control
         group.bench_with_id(
-            format!("bs58-rs_{}chars", encoded.len()),
-            BenchmarkId::new("bs58-rs", encoded.len()),
+            format!("base58_{}chars", len),
+            BenchmarkId::new("base58", len),
+            |b, &len| {
+                let s = black_box(&encoded[..len]);
+                b.iter(|| base58::decode(s).unwrap())
+            },
+        );
+
+        // bs58 reference
+        group.bench_with_id(
+            format!("bs58_{}chars", len),
+            BenchmarkId::new("bs58", len),
             |b, &len| {
                 let s = black_box(&encoded[..len]);
                 b.iter(|| bs58::decode(s).unwrap())
@@ -89,14 +115,43 @@ fn bench_roundtrip(c: &mut Criterion) {
     group.throughput(Throughput::Bytes(1));
 
     for (bytes, _) in bsv_samples() {
+        let len = bytes.len();
+
+        // bsv58
         group.bench_with_id(
-            format!("bsv58_{}B", bytes.len()),
-            BenchmarkId::new("bsv58", bytes.len()),
+            format!("bsv58_{}B", len),
+            BenchmarkId::new("bsv58", len),
             |b, &len| {
                 let data = black_box(&bytes[..len]);
                 b.iter(|| {
                     let enc = encode(data);
                     decode(&enc, false).unwrap()
+                })
+            },
+        );
+
+        // base58 control
+        group.bench_with_id(
+            format!("base58_{}B", len),
+            BenchmarkId::new("base58", len),
+            |b, &len| {
+                let data = black_box(&bytes[..len]);
+                b.iter(|| {
+                    let enc = base58::encode(data);
+                    base58::decode(&enc).unwrap()
+                })
+            },
+        );
+
+        // bs58 reference
+        group.bench_with_id(
+            format!("bs58_{}B", len),
+            BenchmarkId::new("bs58", len),
+            |b, &len| {
+                let data = black_box(&bytes[..len]);
+                b.iter(|| {
+                    let enc = bs58::encode(data);
+                    bs58::decode(&enc).unwrap()
                 })
             },
         );

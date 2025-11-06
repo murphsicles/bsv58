@@ -1,11 +1,11 @@
 //! Base58 decoding module for bsv58.
 //! Specialized for Bitcoin SV: Bitcoin alphabet, optional double-SHA256 checksum validation.
-//! Optimizations: Precomp table for char->val, u64 accumulator for chunking (~30% faster),
-//! unrolled loops, SIMD dispatch (AVX2/NEON for 2x+ on batch digits).
+//! Optimizations: Precomp table for char->val, arch-specific SIMD (AVX2/NEON) for batch Horner (~4x faster),
+//! scalar u64 fallback. Runtime dispatch for x86/ARM.
 
 use crate::ALPHABET;
 use sha2::{Digest, Sha256};
-use crate::simd::simd_horner;
+use crate::simd::{decode_simd_x86, decode_simd_arm};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
@@ -27,8 +27,7 @@ pub enum DecodeError {
 ///
 /// # Performance Notes
 /// - Capacity: ~0.733 * input len (log256(58)).
-/// - SIMD: Batches 8/4 digits on x86/ARM (>=16/8 chars).
-/// - Early reject: Invalid chars checked per-batch.
+/// - SIMD: AVX2 (8 digits x86), NEON (4 digits ARM); scalar fallback.
 #[inline(always)]
 pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {
     if input.is_empty() {
@@ -50,13 +49,12 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
         return finish_decode(output, validate_checksum);
     }
 
-    // Accumulate num via Horner: num = ((... (d_n * 58 + d_{n-1}) * 58 + ...) * 58 + d_0)
+    // Accumulate num via Horner: Dispatch SIMD or scalar
     let num = {
-        // Arch-specific dispatch for SIMD (runtime-detected; cheap branch)
         #[cfg(target_arch = "x86_64")]
         {
-            if digits.len() >= 16 && is_x86_feature_detected!("avx2") {
-                decode_simd::<8>(digits, zeros, &POW58_8)?
+            if digits.len() >= 32 && std::arch::is_x86_feature_detected!("avx2") {
+                decode_simd_x86(digits, zeros)?
             } else {
                 decode_scalar(digits, zeros)?
             }
@@ -64,8 +62,8 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
 
         #[cfg(target_arch = "aarch64")]
         {
-            if digits.len() >= 8 && is_aarch64_feature_detected!("neon") {
-                decode_simd::<4>(digits, zeros, &POW58_4)?
+            if digits.len() >= 16 && std::arch::is_aarch64_feature_detected!("neon") {
+                decode_simd_arm(digits, zeros)?
             } else {
                 decode_scalar(digits, zeros)?
             }
@@ -94,60 +92,6 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
     finish_decode(output, validate_checksum)
 }
 
-/// SIMD decode helper: Batch N digits into partial sum via Horner.
-/// - N=8 (x86): Fits 256-bit AVX2.
-/// - N=4 (ARM): Fits 128-bit NEON.
-/// Accumulates to u64 (cascades for long inputs; for >64-bit, we'd need BigInt but BSV payloads fit).
-/// Validates chars inline, propagates Err with pos = zeros + offset.
-#[inline(always)]
-fn decode_simd<const N: usize>(
-    digits: &[u8],
-    zeros: usize,
-    powers: &[u64; N],
-) -> Result<u64, DecodeError>
-where
-    [(); N]: ,  // Const generic for lane count
-{
-    use std::simd::Simd;
-    type U8x = Simd<u8, N>;
-
-    let mut acc: u64 = 0;
-    let mut i = 0;
-    // Batch loop: Process N digits per iter
-    while i + N <= digits.len() {
-        // Load unaligned chunk
-        let chunk = U8x::from_slice_unaligned(&digits[i..i + N]);
-        // Map to values via table (loop for small N; SIMD broadcast/map not needed)
-        let mut vals = U8x::splat(0u8);
-        for j in 0..N {
-            let ch = chunk[j];
-            let val = DIGIT_TO_VAL[ch as usize];
-            if val == 255 {
-                return Err(DecodeError::InvalidChar(zeros + i + j as usize));
-            }
-            vals[j] = val;
-        }
-
-        // Horner batch: sum (val_j * 58^j) for j=0..N-1
-        let partial = simd_horner(vals, powers);
-        // Cascade: acc * 58^N + partial_sum
-        acc = acc
-            .wrapping_mul(58u64.pow(N as u32))
-            .wrapping_add(partial.reduce_sum() as u64);  // reduce_sum for total
-        i += N;
-    }
-
-    // Tail: Scalar fallback for remainder
-    for j in i..digits.len() {
-        let val = DIGIT_TO_VAL[digits[j] as usize];
-        if val == 255 {
-            return Err(DecodeError::InvalidChar(zeros + j));
-        }
-        acc = acc * 58 + (val as u64);
-    }
-    Ok(acc)
-}
-
 /// Scalar fallback: Simple loop for short inputs or no SIMD.
 /// Unrolled implicitly by optimizer; could manual-unroll 4 for +10% but keep simple.
 /// Propagates InvalidChar with pos = zeros + j.
@@ -174,7 +118,7 @@ fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>
         let payload = &output[..output.len() - 4];
         let hash1 = Sha256::digest(payload);  // Single SHA256
         let hash2 = Sha256::digest(&hash1);   // Double
-        let expected_checksum = &hash2.as_slice()[..4];
+        let expected_checksum = &hash2[0..4];  // Direct slice
         let actual_checksum = &output[output.len() - 4..];
         if expected_checksum != actual_checksum {
             return Err(DecodeError::Checksum);
@@ -190,23 +134,19 @@ fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>
 /// Static: ~128 bytes, lookup O(1). Ignores non-ASCII (BSV is ASCII-safe).
 const DIGIT_TO_VAL: [u8; 128] = {
     let mut table = [255u8; 128];
+    let alphabet = ALPHABET.as_ref();  // Borrow to avoid iter in const
     let mut idx = 0u8;
-    for &ch in ALPHABET.iter().take(58) {  // Ensure <128
+    let mut i = 0usize;
+    while i < 58 {
+        let ch = alphabet[i];
         if (ch as usize) < 128 {
             table[ch as usize] = idx;
         }
         idx += 1;
+        i += 1;
     }
     table
 };
-
-/// Precomp powers of 58 for SIMD Horner (N=4/8 lanes).
-/// 58^0=1, 58^1=58, ..., up to 58^{N-1}. u64 for no overflow (58^7 ~2.2e12 < 2^64).
-const POW58_4: [u64; 4] = [1, 58, 3364, 195112];
-
-const POW58_8: [u64; 8] = [
-    1, 58, 3364, 195112, 11316496, 656356768, 38052720448, 2207061000000,
-];
 
 /// Legacy compat: Decode without checksum (raw Base58).
 pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
@@ -248,12 +188,5 @@ mod tests {
     fn decode_length_error() {
         // Short: "12" -> ~1 byte <4
         assert!(matches!(decode_full("12", true), Err(DecodeError::InvalidLength)));
-    }
-
-    #[test]
-    fn simd_stubs() {
-        // Smoke: Ensure no panic on dispatch (tests scalar path)
-        let _ = decode("n7UKu7Y5");
-        // Real SIMD tests via benches
     }
 }

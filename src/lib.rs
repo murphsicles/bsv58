@@ -5,8 +5,8 @@
 //! For checksum: `decode_full(&str, true)`. SIMD: AVX2 (x86) / NEON (ARM) dispatch; scalar fallback.
 //! Rust 1.80+ for std::simd. Usage: `cargo add bsv58`; benches via `cargo bench`.
 
-pub const ALPHABET: &[u8; 58] =
-    b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+pub const ALPHABET: [u8; 58] =
+    *b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 mod encode;
 mod decode;
@@ -62,7 +62,7 @@ mod tests {
             assert_eq!(enc, *encoded, "Encode fail: {:?}", bytes);
 
             let dec = decode(&enc).unwrap();
-            assert_eq!(dec, bytes, "Decode fail: {}", enc);
+            assert_eq!(dec, *bytes, "Decode fail: {}", enc);
         }
     }
 
@@ -79,7 +79,7 @@ mod tests {
 
             // Decode addr w/checksum → get payload
             let dec = decode_full(addr, true).unwrap();
-            assert_eq!(dec, payload, "Checksum decode fail: {}", addr);
+            assert_eq!(dec, *payload, "Checksum decode fail: {}", addr);
         }
     }
 

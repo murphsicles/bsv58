@@ -17,7 +17,16 @@ pub enum DecodeError {
     InvalidLength,
 }
 
-/// Decodes a Base58 string (Bitcoin alphabet) to bytes.
+/// Decodes a Base58 string (Bitcoin alphabet) to raw bytes (no checksum).
+///
+/// # Errors
+/// - `InvalidChar(pos)`: Non-alphabet char at `pos`.
+#[inline]
+pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
+    decode_full(input, false)
+}
+
+/// Decodes a Base58Check string (Bitcoin alphabet) to raw bytes, optionally validating checksum.
 /// Validates BSV-style checksum if `validate_checksum=true` (default false for raw payloads).
 ///
 /// # Errors
@@ -53,7 +62,7 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
     {
         #[cfg(target_arch = "x86_64")]
         {
-            if digits.len() >= 32 && std::arch::is_x86_feature_detected("avx2") {
+            if digits.len() >= 32 && std::arch::is_x86_feature_detected!("avx2") {
                 decode_simd_x86(&mut output, digits, zeros)?;
             } else {
                 decode_scalar(&mut output, digits, zeros)?;
@@ -62,7 +71,7 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
 
         #[cfg(target_arch = "aarch64")]
         {
-            if digits.len() >= 16 && std::arch::is_aarch64_feature_detected("neon") {
+            if digits.len() >= 16 && std::arch::is_aarch64_feature_detected!("neon") {
                 decode_simd_arm(&mut output, digits, zeros)?;
             } else {
                 decode_scalar(&mut output, digits, zeros)?;
@@ -94,7 +103,7 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<()
         }
         let mut carry: u32 = val as u32;
         for b in output.iter_mut() {
-            carry += (b as u32) * 58;
+            carry += (*b as u32) * 58;
             *b = (carry & 0xFF) as u8;
             carry >>= 8;
         }
@@ -131,12 +140,8 @@ fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<
             #[allow(clippy::cast_ptr_alignment)]
             let chunk_ptr = digits.as_ptr().add(i).cast::<__m256i>();
             #[allow(clippy::cast_ptr_alignment)]
-            _mm256_storeu_si256(
-                batch.as_mut_ptr().cast::<__m256i>(),
-                _mm256_loadu_si256(chunk_ptr),
-            );
+            _mm256_storeu_si256(batch.as_mut_ptr().cast::<__m256i>(), _mm256_loadu_si256(chunk_ptr));
 
-            // Map to vals: Store to array + table lookup (SIMD gather unstable, scalar fast for N=8)
             let mut vals = [0u8; N];
             for j in 0..N {
                 let ch = batch[j];
@@ -147,10 +152,9 @@ fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<
                 vals[j] = val;
             }
 
-            // Horner: Fused mul/add (58 * acc + val) unrolled for N
             let horner = crate::simd::horner_batch::<N>(vals, &POWERS);
 
-            // Carry-prop to output (u64 for large sum)
+            // Carry to output (u64 for large sum)
             let mut carry: u64 = horner;
             for b in output.iter_mut() {
                 carry += (*b as u64) * 58;
@@ -185,7 +189,6 @@ fn decode_simd_arm(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<
             let chunk: uint8x16_t = vld1q_u8(digits.as_ptr().add(i));
             vst1q_u8(batch.as_mut_ptr(), chunk);
 
-            // Map to vals: Store + lookup
             let mut vals = [0u8; N];
             for j in 0..N {
                 let ch = batch[j];
@@ -196,7 +199,6 @@ fn decode_simd_arm(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<
                 vals[j] = val;
             }
 
-            // Horner fused: Unrolled mul/add
             let horner = crate::simd::horner_batch::<N>(vals, &POWERS);
 
             // Carry-prop
@@ -258,15 +260,6 @@ const DIGIT_TO_VAL: [u8; 128] = {
     }
     table
 };
-
-/// Legacy compat: Decode without checksum (raw Base58).
-///
-/// # Errors
-/// - `InvalidChar(pos)`: Non-alphabet char at `pos`.
-#[inline]
-pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
-    decode_full(input, false)
-}
 
 #[cfg(test)]
 mod tests {

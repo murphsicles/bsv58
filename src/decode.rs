@@ -1,5 +1,5 @@
 //! Base58 decoding module for bsv58.
-//! Specialized for Bitcoin SV: Bitcoin alphabet, optional double-SHA256 checksum validation.
+//! Specialized for Bitcoin SV: Base58 alphabet, optional double-SHA256 checksum validation.
 //! Optimizations: Precomp table for char->val, arch-specific SIMD intrinsics (AVX2/NEON ~4x faster),
 //! scalar u64 fallback. Runtime dispatch for x86/ARM.
 //! Perf: <4c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
@@ -15,7 +15,7 @@ pub enum DecodeError {
     Checksum,
     /// Payload too short for checksum (needs >=4 bytes).
     InvalidLength,
-}
+};
 
 /// Decodes a Base58 string (Bitcoin alphabet) to bytes (no checksum).
 ///
@@ -84,8 +84,7 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
         decode_scalar(&mut output, digits, zeros)?;
     }
 
-    // Extract bytes: Repeatedly num % 256 -> byte, num /= 256 (big-endian reverse)
-    output.reverse();  // From little-endian accum to original order
+    output.reverse();
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
 
     finish_decode(output, validate_checksum)
@@ -94,7 +93,7 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
 /// Scalar fallback: Simple loop for short inputs or no SIMD.
 /// Unrolled implicitly by optimizer; could manual-unroll 4 for +10% but keep simple.
 /// Propagates `InvalidChar` with pos = zeros + j.
-#[allow(clippy::cast_possible_truncation)] // safe: carry & 0xFF <= 255
+#[allow(clippy::cast_lossless, clippy::cast_possible_truncation)]
 fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<(), DecodeError> {
     for (j, &ch) in digits.iter().enumerate() {
         let val = DIGIT_TO_VAL[ch as usize];
@@ -103,7 +102,7 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<()
         }
         let mut carry: u32 = val as u32;
         for b in output.iter_mut() {
-            carry += (*b as u32) * 58;
+            carry += u32::from(*b) * 58;
             *b = (carry & 0xFF) as u8;
             carry >>= 8;
         }
@@ -140,7 +139,10 @@ fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<
             #[allow(clippy::cast_ptr_alignment)]
             let chunk_ptr = digits.as_ptr().add(i).cast::<__m256i>();
             #[allow(clippy::cast_ptr_alignment)]
-            _mm256_storeu_si256(batch.as_mut_ptr().cast::<__m256i>(), _mm256_loadu_si256(chunk_ptr));
+            _mm256_storeu_si256(
+                batch.as_mut_ptr().cast::<__m256i>(),
+                _mm256_loadu_si256(chunk_ptr),
+            );
 
             let mut vals = [0u8; N];
             for j in 0..N {
@@ -154,10 +156,10 @@ fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<
 
             let horner = crate::simd::horner_batch::<N>(vals, &POWERS);
 
-            // Carry-prop to output (u64 for large sum)
+            // Carry to output (u64 for large sum)
             let mut carry: u64 = horner;
             for b in output.iter_mut() {
-                carry += (*b as u64) * 58;
+                carry += u64::from(*b) * 58;
                 *b = (carry & 0xFF) as u8;
                 carry >>= 8;
             }
@@ -204,7 +206,7 @@ fn decode_simd_arm(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<
             // Carry-prop
             let mut carry: u64 = horner;
             for b in output.iter_mut() {
-                carry += (*b as u64) * 58;
+                carry += u64::from(*b) * 58;
                 *b = (carry & 0xFF) as u8;
                 carry >>= 8;
             }
@@ -230,7 +232,7 @@ fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>
         // BSV standard: Last 4 bytes == first 4 of double-SHA256(payload[:-4])
         let payload = &output[..output.len() - 4];
         let hash1 = Sha256::digest(payload);  // Single SHA256
-        let hash2 = Sha256::digest(&hash1);   // Double
+        let hash2 = Sha256::digest(hash1);   // Double
         let expected_checksum = &hash2[0..4];  // Direct slice
         let actual_checksum = &output[output.len() - 4..];
         if expected_checksum != actual_checksum {

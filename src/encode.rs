@@ -2,7 +2,7 @@
 //! Specialized for Bitcoin SV: Bitcoin alphabet, leading zero handling as '1's.
 //! Optimizations: Precomp table for val->digit, unsafe zero-copy reverse (~15% faster),
 //! arch-specific SIMD intrinsics (AVX2/NEON ~4x arith speedup), u64 scalar fallback.
-//! Perf: <5c/byte on AVX2 (unrolled magic mul div, fused carry sum); branch-free where possible.
+//! Perf: <5c/byte on AVX2 (unrolled magic mul div, divmod produce LSB-first, but Base58 is MSB-first
 
 use std::ptr;
 
@@ -42,7 +42,7 @@ pub fn encode(input: &[u8]) -> String {
     // Safety: src/dst non-overlapping (new Vec), len checked, ASCII output unchecked (alphabet safe).
     let mut buf: Vec<u8> = Vec::with_capacity(non_zero_len);
     unsafe {
-        ptr::copy_nonoverlapping(non_zero.as_ptr(), buf.as_mut_ptr(), non_zero_len);
+        ptr::copy_non_overlapping(non_zero.as_ptr(), buf.as_mut_ptr(), non_zero_len);
         buf.set_len(non_zero_len);
     }
     buf.reverse();  // Now little-endian for LSB-first divmod (digits pop MSB)
@@ -87,7 +87,7 @@ pub fn encode(input: &[u8]) -> String {
 /// Scalar fallback: Byte-by-byte carry propagation (u64 handles ~8 bytes before /58).
 /// For short inputs (<16 bytes) or no SIMD. Optimizer unrolls ~4-8 iters naturally.
 /// Enhanced: Wrapping ops for safety on large inputs.
-#[allow(clippy::cast_possible_truncation)] // safe: temp / 58 ≤ 255
+#[allow(clippy::cast_possible_truncation)] // safe: temp / 58 <= 255
 #[inline]
 fn encode_scalar(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
     while bytes.iter().any(|&b| b != 0) {
@@ -188,7 +188,7 @@ fn encode_simd_arm(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
             }
             let (q, r) = crate::simd::divmod_batch::<LANES>(u32_batch);
             for lane in 0..LANES {
-                output.push(VAL_TO_DIGIT[r[lane] as usize]);
+                output.push(VAL_TO_DIGIT[r[lane] as u8]);
                 let idx = lane * 4;
                 let q_bytes = q[lane].to_le_bytes();
                 batch[idx..idx + 4].copy_from_slice(&q_bytes);

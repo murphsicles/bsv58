@@ -5,6 +5,8 @@
 //! SIMD: AVX2 (x86) / NEON (ARM) dispatch; scalar fallback. Rust 1.80+ for std::simd.
 //! Usage: `cargo add bsv58`; benches via `cargo bench` (vs. bs58/base58).
 
+#![feature(portable_simd)]  // Stable in 1.80+, but flag for CI (Rust 1.91)
+
 pub const ALPHABET: &[u8; 58] =
     b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
@@ -17,7 +19,13 @@ pub use encode::encode;
 
 /// Decodes Base58 string to bytes (Bitcoin alphabet).
 /// Validates BSV checksum if `validate_checksum=true` (strips on success).
-pub use decode::{decode, DecodeError};
+pub use decode::{decode_full as decode, DecodeError};
+
+/// Legacy compat: Decode without checksum.
+#[inline(always)]
+pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
+    decode_full(input, false)
+}
 
 #[cfg(test)]
 mod tests {
@@ -56,7 +64,7 @@ mod tests {
             let enc = encode(bytes);
             assert_eq!(enc, *encoded, "Encode fail: {:?}", bytes);
 
-            let dec = decode(&enc, false).unwrap();
+            let dec = decode(&enc).unwrap();
             assert_eq!(dec, bytes, "Decode fail: {}", enc);
         }
     }
@@ -73,7 +81,7 @@ mod tests {
             assert_ne!(enc_raw, *addr);
 
             // Decode addr w/checksum → get payload
-            let dec = decode(addr, true).unwrap();
+            let dec = decode_full(addr, true).unwrap();
             assert_eq!(dec, payload, "Checksum decode fail: {}", addr);
 
             // Roundtrip: encode(payload) + manual checksum → addr? (stub; full in benches)
@@ -85,19 +93,19 @@ mod tests {
     fn invalid_cases() {
         // Invalid char
         assert!(matches!(
-            decode("invalid!", false),
+            decode("invalid!"),
             Err(DecodeError::InvalidChar(0))
         ));
 
         // Checksum mismatch (flip last char)
         let invalid_addr = "1BitcoinEaterAddressDontSendf59kuF";
         assert!(matches!(
-            decode(invalid_addr, true),
+            decode_full(invalid_addr, true),
             Err(DecodeError::Checksum)
         ));
 
         // Too short for checksum
-        assert!(matches!(decode("12", true), Err(DecodeError::InvalidLength)));
+        assert!(matches!(decode_full("12", true), Err(DecodeError::InvalidLength)));
     }
 
     #[test]
@@ -105,7 +113,7 @@ mod tests {
         // No panic on dispatch (scalar if no SIMD)
         let bytes = b"hello world bsv58 test";
         let enc = encode(bytes);
-        let dec = decode(&enc, false).unwrap();
+        let dec = decode(&enc).unwrap();
         assert_eq!(dec, bytes);
     }
 
@@ -114,7 +122,7 @@ mod tests {
         // 50B pubkey (BSV max): No overflow
         let pubkey = vec![0x42u8; 50];  // Dummy
         let enc = encode(&pubkey);
-        let dec = decode(&enc, false).unwrap();
+        let dec = decode(&enc).unwrap();
         assert_eq!(dec, pubkey);
         assert!(enc.len() >= 68);  // ~1.36x
     }

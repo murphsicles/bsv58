@@ -1,5 +1,5 @@
 //! Base58 decoding module for bsv58.
-//! Specialized for Bitcoin SV: Base58 alphabet, optional double-SHA256 checksum validation.
+//! Specialized for Bitcoin SV: Bitcoin alphabet, optional double-SHA256 checksum validation.
 //! Optimizations: Precomp table for char->val, arch-specific SIMD intrinsics (AVX2/NEON ~4x faster),
 //! scalar u64 fallback. Runtime dispatch for x86/ARM.
 //! Perf: <4c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
@@ -15,7 +15,7 @@ pub enum DecodeError {
     Checksum,
     /// Payload too short for checksum (needs >=4 bytes).
     InvalidLength,
-};
+}
 
 /// Decodes a Base58 string (Bitcoin alphabet) to bytes (no checksum).
 ///
@@ -232,8 +232,8 @@ fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>
         // BSV standard: Last 4 bytes == first 4 of double-SHA256(payload[:-4])
         let payload = &output[..output.len() - 4];
         let hash1 = Sha256::digest(payload);  // Single SHA256
-        let hash2 = Sha256::digest(hash1);   // Double
-        let expected_checksum = &hash2[0..4];  // Direct slice
+        let hash2 = Sha256::digest(hash1);    // Double
+        let expected_checksum = &hash2[0..4]; // Direct slice
         let actual_checksum = &output[output.len() - 4..];
         if expected_checksum != actual_checksum {
             return Err(DecodeError::Checksum);

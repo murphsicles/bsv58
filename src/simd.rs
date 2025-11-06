@@ -1,4 +1,4 @@
-//! Shared SIMD utilities for bsv58 encode/decode.
+[!/ Shared SIMD utilities for bsv58 encode/decode.
 //! Portable across x86 (AVX2) and ARM (NEON) via intrinsics (stable Rust 1.80+).
 //! Focus: Unrolled array divmod (% /58) and Horner scheme (*58 + add) for hot loops.
 //! Widths: N=8 (x86 256-bit sim), N=4 (ARM 128-bit sim) – tuned for lane efficiency.

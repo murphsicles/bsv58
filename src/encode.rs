@@ -16,6 +16,7 @@ const VAL_TO_DIGIT: [u8; 58] = [
     b'r', b's', b't', b'u', b'v', b'w', b'x', b'y', b'z',  // 49-57
 ];
 
+#[must_use]
 #[inline]
 pub fn encode(input: &[u8]) -> String {
     if input.is_empty() {
@@ -194,7 +195,10 @@ fn encode_simd_arm(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
             }
 
             // Cascade sum
-            let mut carry_sum: u64 = u64::from(q[0]) + u64::from(q[1]) + u64::from(q[2]) + u64::from(q[3]);
+            let mut carry_sum: u64 = 0;
+            for &qv in &q {
+                carry_sum += u64::from(qv);
+            }
             #[allow(clippy::cast_possible_truncation)]
             let carry_bytes = (carry_sum as u32).to_le_bytes();
             let copy_len = 4.min(bytes.len() - i);

@@ -22,8 +22,8 @@ simd = []  # Enable AVX2/NEON intrinsics (stable, runtime-detected)
 [dev-dependencies]
 base58 = "0.2"  # Control baseline (slower, generic)
 bs58 = "0.5"  # Reference baseline (optimized target)
-criterion = { version = "0.5", features = ["html_reports"] }  # For benchmarking
-hex-literal = "0.4"  # For tests
+criterion = { version = "0.7", features = ["html_reports"] }  # For benchmarking
+hex-literal = "1.1"  # For tests
 
 [[bench]]
 name = "bench"

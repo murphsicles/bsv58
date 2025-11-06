@@ -12,6 +12,7 @@ const BASE: u64 = 58;
 /// Correction: Unrolled per-lane adjust (rare over/under by 1; <2% branches).
 /// Fixed N: Compile-time lanes (e.g., 4/8); u32 for arith.
 /// Safety: Unsigned, no overflow in BSV range (max ~2^400 bits).
+#[must_use]
 #[inline]
 pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {
     const MAGIC: u64 = 0x0DDF25201u64;  // Tuned reciprocal: 2^64 / 58 ≈ 0x0DDF25201
@@ -24,9 +25,7 @@ pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {
         let val_u64 = val as u64;
         let wide = val_u64.wrapping_mul(MAGIC);
         let q = (wide >> 32) as u32;
-        #[allow(clippy::cast_possible_truncation)]
         let p = q.wrapping_mul(BASE as u32);
-        #[allow(clippy::cast_possible_truncation)]
         let r = val.wrapping_sub(p) as u8;
         if (r as u32) >= BASE as u32 {
             rem[lane] = (r as u32 - BASE as u32) as u8;
@@ -45,6 +44,7 @@ pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {
 /// Actually: `sum_{j=0}^{N-1} val_j * powers[j]` (then * `BASEⁿ` for cascade).
 /// u64 lanes: No overflow (58^8 ~1e14 * 57 < 2^64).
 /// Fixed N: Small loop (N=4/8) unrolls fully.
+#[must_use]
 #[inline]
 pub fn horner_batch<const N: usize>(vals: [u8; N], powers: &[u64; N]) -> u64 {
     let mut acc: u64 = 0;

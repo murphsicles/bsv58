@@ -77,8 +77,9 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
     }
 
     // Extract bytes: Repeatedly num % 256 -> byte, num /= 256 (big-endian reverse)
+    output.reverse();  // From little-endian accum to original order
     // Prepend leading zeros
-    output.resize(output.len() + zeros, 0);
+    output.splice(0..0, std::iter::repeat(0u8).take(zeros));
 
     finish_decode(output, validate_checksum)
 }
@@ -113,31 +114,29 @@ fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<
     use std::arch::x86_64::*;
     let mut i = 0;
     const N: usize = 8;
+    const POWERS: [u64; N] = [1, 58, 3364, 195112, 11316496, 655747312, 37974983361, 2199249088774];
     while i + N <= digits.len() {
         unsafe {
-            let chunk = _mm256_loadu_si256(digits.as_ptr().add(i) as *const __m256i);
-            // Map to vals: Store to array + table lookup (SIMD gather unstable, scalar fast for N=8)
+            let mut batch = [0u8; N];
+            let chunk_ptr = digits.as_ptr().add(i) as *const __m256i;
+            _mm256_storeu_si256(batch.as_mut_ptr() as *mut __m256i, _mm256_loadu_si256(chunk_ptr));
+
+            // Map to vals + check invalid
             let mut vals = [0u8; N];
-            _mm256_storeu_si256(vals.as_mut_ptr() as *mut __m256i, chunk);
             for j in 0..N {
-                let ch = vals[j];
+                let ch = batch[j];
                 let val = DIGIT_TO_VAL[ch as usize];
                 if val == 255 {
                     return Err(DecodeError::InvalidChar(zeros + i + j));
                 }
                 vals[j] = val;
             }
-            let vals_u32 = _mm256_cvtepu8_epi32(_mm_loadl_epi64(vals.as_ptr() as *const __m128i));  // Low 4, repeat for high
 
-            // Horner: Fused mul/add (58 * acc + val) unrolled for N
-            let base = _mm256_set1_epi32(58);
-            let mut partial = _mm256_setzero_si256();
-            partial = _mm256_add_epi32(_mm256_mullo_epi32(base, partial), vals_u32);
-            // ... repeat unrolled for full N (compiler optimizes)
-            let sum = _mm256_reduce_add_epi32(partial);  // Horizontal sum (custom reduce: extract + add)
+            // Unrolled Horner batch
+            let horner = crate::horner_batch::<8>(vals, &POWERS);
 
-            // Carry to output (u64 for large sum)
-            let mut carry: u64 = sum as u64;
+            // Carry-prop to output (u64 for sum)
+            let mut carry: u64 = horner;
             for b in output.iter_mut() {
                 carry += (*b as u64) * 58;
                 *b = (carry & 0xFF) as u8;
@@ -162,31 +161,29 @@ fn decode_simd_arm(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<
     use std::arch::aarch64::*;
     let mut i = 0;
     const N: usize = 4;
+    const POWERS: [u64; N] = [1, 58, 3364, 195112];
     while i + N <= digits.len() {
         unsafe {
-            let chunk = vld1q_u8(digits.as_ptr().add(i) as *const u8);
-            // Map to vals: Store + lookup
+            let mut batch = [0u8; N];
+            let chunk = vld1_u8(digits.as_ptr().add(i) as *const u8);  // 128-bit for 16B, but N=4 digits
+            vst1_u8(batch.as_mut_ptr() as *mut u8, chunk);
+
+            // Map to vals + check
             let mut vals = [0u8; N];
-            vst1q_u8(vals.as_mut_ptr() as *mut u8, chunk);
             for j in 0..N {
-                let ch = vals[j];
+                let ch = batch[j];
                 let val = DIGIT_TO_VAL[ch as usize];
                 if val == 255 {
                     return Err(DecodeError::InvalidChar(zeros + i + j));
                 }
                 vals[j] = val;
             }
-            let vals_u32 = vld1q_u32(vals.as_ptr() as *const u32);
 
-            // Horner fused: Unrolled mul/add
-            let base = vdupq_n_u32(58);
-            let mut partial = vdupq_n_u32(0);
-            partial = vaddq_u32(vmulq_u32(base, partial), vals_u32);
-            // ... unrolled
-            let sum = vaddvq_u32(partial);  // Horizontal sum
+            // Unrolled Horner
+            let horner = crate::horner_batch::<4>(vals, &POWERS);
 
-            // Carry
-            let mut carry: u64 = sum as u64;
+            // Carry-prop
+            let mut carry: u64 = horner;
             for b in output.iter_mut() {
                 carry += (*b as u64) * 58;
                 *b = (carry & 0xFF) as u8;

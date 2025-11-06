@@ -28,3 +28,12 @@ hex-literal = "1.1.0"  # For tests
 [[bench]]
 name = "bench"
 harness = false
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+opt-level = 3
+
+[profile.bench]
+inherits = "release"

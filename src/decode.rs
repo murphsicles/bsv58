@@ -5,8 +5,8 @@
 
 use crate::ALPHABET;
 use sha2::{Digest, Sha256};
+use crate::simd::simd_horner;
 
-/// Errors during Base58 decoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
     /// Invalid character at position.
@@ -30,7 +30,7 @@ pub enum DecodeError {
 /// - SIMD: Batches 8/4 digits on x86/ARM (>=16/8 chars).
 /// - Early reject: Invalid chars checked per-batch.
 #[inline(always)]
-pub fn decode(input: &str, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {
+pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {
     if input.is_empty() {
         return Ok(vec![]);  // Empty -> empty
     }
@@ -78,7 +78,7 @@ pub fn decode(input: &str, validate_checksum: bool) -> Result<Vec<u8>, DecodeErr
     };
 
     // Extract bytes: Repeatedly num % 256 -> byte, num /= 256 (big-endian reverse)
-    let mut extracted = Vec::new();
+    let mut extracted = vec![];
     let mut temp_num = num;
     while temp_num > 0 {
         extracted.push((temp_num % 256) as u8);
@@ -108,7 +108,7 @@ fn decode_simd<const N: usize>(
 where
     [(); N]: ,  // Const generic for lane count
 {
-    use std::simd::{Simd, u8xN};
+    use std::simd::Simd;
     type U8x = Simd<u8, N>;
 
     let mut acc: u64 = 0;
@@ -210,7 +210,7 @@ const POW58_8: [u64; 8] = [
 
 /// Legacy compat: Decode without checksum (raw Base58).
 pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
-    decode(input, false)
+    decode_full(input, false)
 }
 
 #[cfg(test)]
@@ -237,23 +237,23 @@ mod tests {
         // Payload: version=0x00 + 20-byte pubkey hash (759d66... for eater burn)
         let addr = "1BitcoinEaterAddressDontSendf59kuE";
         let expected_payload = hex!("00759d6677091e973b9e9d99f19c68fbf43e3f05f9");
-        assert_eq!(decode(addr, true).unwrap(), expected_payload.to_vec());
+        assert_eq!(decode_full(addr, true).unwrap(), expected_payload.to_vec());
 
         // Invalid checksum example (flip a bit)
         let invalid_addr = "1BitcoinEaterAddressDontSendf59kuF";  // Last char wrong
-        assert!(matches!(decode(invalid_addr, true), Err(DecodeError::Checksum)));
+        assert!(matches!(decode_full(invalid_addr, true), Err(DecodeError::Checksum)));
     }
 
     #[test]
     fn decode_length_error() {
         // Short: "12" -> ~1 byte <4
-        assert!(matches!(decode("12", true), Err(DecodeError::InvalidLength)));
+        assert!(matches!(decode_full("12", true), Err(DecodeError::InvalidLength)));
     }
 
     #[test]
     fn simd_stubs() {
         // Smoke: Ensure no panic on dispatch (tests scalar path)
-        let _ = decode("n7UKu7Y5", false);
+        let _ = decode("n7UKu7Y5");
         // Real SIMD tests via benches
     }
 }

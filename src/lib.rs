@@ -1,11 +1,9 @@
 //! bsv58: Ultra-fast Base58 codec for Bitcoin SV.
 //! BSV-only: Bitcoin alphabet, leading-zero '1's, optional double-SHA256 checksum decode.
 //! No generics/multi-alphabets—hardcoded for perf. Targets 5x+ bs58-rs on BSV payloads.
-//! Exports: `encode(&[u8]) -> String`, `decode(&str, validate_checksum: bool) -> Result<Vec<u8>, DecodeError>`.
-//! SIMD: AVX2 (x86) / NEON (ARM) dispatch; scalar fallback. Rust 1.80+ for std::simd.
-//! Usage: `cargo add bsv58`; benches via `cargo bench` (vs. bs58/base58).
-
-#![feature(portable_simd)]  // Stable in 1.80+, but flag for CI (Rust 1.91)
+//! Exports: `encode(&[u8]) -> String`, `decode(&str) -> Result<Vec<u8>, DecodeError>` (no checksum).
+//! For checksum: `decode_full(&str, true)`. SIMD: AVX2 (x86) / NEON (ARM) dispatch; scalar fallback.
+//! Rust 1.80+ for std::simd. Usage: `cargo add bsv58`; benches via `cargo bench`.
 
 pub const ALPHABET: &[u8; 58] =
     b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -17,15 +15,14 @@ mod simd;
 /// Encodes bytes to Base58 string (Bitcoin alphabet, leading zeros as '1's).
 pub use encode::encode;
 
-/// Decodes Base58 string to bytes (Bitcoin alphabet).
-/// Validates BSV checksum if `validate_checksum=true` (strips on success).
-pub use decode::{decode_full as decode, DecodeError};
+/// Decodes Base58 string to bytes (Bitcoin alphabet, no checksum).
+pub use decode::decode;
 
-/// Legacy compat: Decode without checksum.
-#[inline(always)]
-pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
-    decode_full(input, false)
-}
+/// Decodes with optional BSV checksum validation (strips on success).
+pub use decode::decode_full;
+
+/// Decode errors.
+pub use decode::DecodeError;
 
 #[cfg(test)]
 mod tests {
@@ -83,9 +80,6 @@ mod tests {
             // Decode addr w/checksum → get payload
             let dec = decode_full(addr, true).unwrap();
             assert_eq!(dec, payload, "Checksum decode fail: {}", addr);
-
-            // Roundtrip: encode(payload) + manual checksum → addr? (stub; full in benches)
-            // Note: encode doesn't add checksum—user does for addrs.
         }
     }
 
@@ -94,7 +88,7 @@ mod tests {
         // Invalid char
         assert!(matches!(
             decode("invalid!"),
-            Err(DecodeError::InvalidChar(0))
+            Err(DecodeError::InvalidChar(7))
         ));
 
         // Checksum mismatch (flip last char)

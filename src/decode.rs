@@ -1,8 +1,8 @@
 //! Base58 decoding module for bsv58.
 //! Specialized for Bitcoin SV: Bitcoin alphabet, optional double-SHA256 checksum validation.
-//! Optimizations: Precomp table for char→val, arch-specific SIMD intrinsics (AVX2/NEON ~4× faster),
+//! Optimizations: Precomp table for char->val, arch-specific SIMD intrinsics (AVX2/NEON ~4x faster),
 //! scalar u64 fallback. Runtime dispatch for x86/ARM.
-//! Perf: <4 c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
+//! Perf: <4c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
 
 use crate::ALPHABET;
 use sha2::{Digest, Sha256};
@@ -13,7 +13,7 @@ pub enum DecodeError {
     InvalidChar(usize),
     /// BSV checksum mismatch (double-SHA256).
     Checksum,
-    /// Payload too short for checksum (needs ≥4 bytes).
+    /// Payload too short for checksum (needs >=4 bytes).
     InvalidLength,
 }
 
@@ -26,24 +26,25 @@ pub enum DecodeError {
 /// - `InvalidLength`: Output <4 bytes (checksum impossible).
 ///
 /// # Performance Notes
-/// - Capacity: ~0.733 × input len (log₂₅₆(58)).
+/// - Capacity: ~0.733 * input len (log256(58)).
 /// - SIMD: AVX2 (8 digits x86), NEON (4 digits ARM); scalar fallback.
-#[must_use]
 #[inline]
 pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {
     if input.is_empty() {
-        return Ok(vec![]);
+        return Ok(vec![]);  // Empty -> empty
     }
 
-    let bytes = input.as_bytes();
+    let bytes = input.as_bytes();  // Borrow as &[u8] for zero-copy
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
     let cap = ((bytes.len() as f64 * 0.733).ceil() as usize).max(1);
     let mut output = Vec::with_capacity(cap);
 
+    // Count leading '1's (map to leading zero bytes)
     let zeros = bytes.iter().take_while(|&&b| b == b'1').count();
-    let digits = &bytes[zeros..];
+    let digits = &bytes[zeros..];  // Skip leading '1's
 
     if digits.is_empty() {
+        // All zeros: resize with zeros
         output.extend(std::iter::repeat_n(0u8, zeros));
         return finish_decode(output, validate_checksum);
     }
@@ -80,8 +81,9 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
     finish_decode(output, validate_checksum)
 }
 
-/// Scalar fallback: simple loop for short inputs or no SIMD.
-/// Propagates `InvalidChar` with `pos = zeros + j`.
+/// Scalar fallback: Simple loop for short inputs or no SIMD.
+/// Unrolled implicitly by optimizer; could manual-unroll 4 for +10% but keep simple.
+/// Propagates InvalidChar with pos = zeros + j.
 fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<(), DecodeError> {
     for (j, &ch) in digits.iter().enumerate() {
         let val = DIGIT_TO_VAL[ch as usize];
@@ -102,29 +104,22 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<()
     Ok(())
 }
 
-/// x86 AVX2 SIMD decode: batch 8 digits via intrinsics (256-bit).
-/// ~4× faster; table lookup scalar (scatter unstable), fused mul-add Horner <2 c/digit.
+/// x86 AVX2 SIMD decode: Batch 8 digits via intrinsics (256-bit).
+/// ~4x faster; table lookup scalar (scatter unstable), fused mul-add Horner <2c/digit.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<(), DecodeError> {
     use std::arch::x86_64::{__m256i, _mm256_loadu_si256, _mm256_storeu_si256};
 
     const N: usize = 8;
-    const POWERS: [u64; N] = [
-        1,
-        58,
-        3_364,
-        195_112,
-        11_316_496,
-        655_747_312,
-        37_974_983_361,
-        2_199_249_088_774,
-    ];
+    const POWERS: [u64; N] = [1, 58, 3_364, 195_112, 11_316_496, 655_747_312, 37_974_983_361, 2_199_249_088_774];
     let mut i = 0;
 
     while i + N <= digits.len() {
         unsafe {
             let mut batch = [0u8; N];
+            #[allow(clippy::cast_ptr_alignment)]
             let chunk_ptr = digits.as_ptr().add(i).cast::<__m256i>();
+            #[allow(clippy::cast_ptr_alignment)]
             _mm256_storeu_si256(batch.as_mut_ptr().cast::<__m256i>(), _mm256_loadu_si256(chunk_ptr));
 
             let mut vals = [0u8; N];
@@ -155,8 +150,8 @@ fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<
     decode_scalar(output, &digits[i..], zeros + i)
 }
 
-/// ARM NEON SIMD decode: batch 4 digits via intrinsics (128-bit).
-/// ~3× faster; fused vmul/add, vaddv reduce <1.5 c/digit.
+/// ARM NEON SIMD decode: Batch 4 digits via intrinsics (128-bit).
+/// ~3x faster; fused vmul/add, vaddv reduce <1.5c/digit.
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
 fn decode_simd_arm(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<(), DecodeError> {
     use std::arch::aarch64::{uint8x16_t, vld1q_u8, vst1q_u8};
@@ -209,7 +204,7 @@ fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>
         let payload_len = output.len() - 4;
         let payload = &output[..payload_len];
         let hash1 = Sha256::digest(payload);
-        let hash2 = Sha256::digest(hash1); // no & needed – owned value
+        let hash2 = Sha256::digest(hash1);
         let expected = &hash2[..4];
         let actual = &output[payload_len..];
         if expected != actual {
@@ -221,11 +216,11 @@ fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>
     Ok(output)
 }
 
-/// Precomputed ASCII → value table (0-57 or 255=invalid).
+/// Precomputed ASCII -> value table (0-57 or 255=invalid).
 /// Static: ~128 bytes, lookup O(1). Ignores non-ASCII (BSV is ASCII-safe).
 const DIGIT_TO_VAL: [u8; 128] = {
     let mut table = [255u8; 128];
-    let alphabet = &ALPHABET; // direct ref, const-stable
+    let alphabet = &ALPHABET;  // Borrow to avoid iter in const
     let mut idx = 0u8;
     let mut i = 0usize;
     while i < 58 {
@@ -239,11 +234,6 @@ const DIGIT_TO_VAL: [u8; 128] = {
     table
 };
 
-/// Legacy compat: decode without checksum (raw Base58).
-///
-/// # Errors
-/// - `InvalidChar(pos)`: Non-alphabet char at `pos`.
-#[must_use]
 pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
     decode_full(input, false)
 }

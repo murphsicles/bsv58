@@ -2,7 +2,7 @@
 //! Specialized for Bitcoin SV: Bitcoin alphabet, leading zero handling as '1's.
 //! Optimizations: Precomp table for val->digit, unsafe zero-copy reverse (~15% faster),
 //! arch-specific SIMD intrinsics (AVX2/NEON ~4x arith speedup), u64 scalar fallback.
-//! Perf: <5c/byte on AVX2 (unrolled magic mul div, divmod produce LSB-first, but Base58 is MSB-first
+//! Perf: <5c/byte on AVX2 (unrolled magic mul div, fused carry sum); branch-free where possible.
 
 use std::ptr;
 
@@ -42,7 +42,7 @@ pub fn encode(input: &[u8]) -> String {
     // Safety: src/dst non-overlapping (new Vec), len checked, ASCII output unchecked (alphabet safe).
     let mut buf: Vec<u8> = Vec::with_capacity(non_zero_len);
     unsafe {
-        ptr::copy_non_overlapping(non_zero.as_ptr(), buf.as_mut_ptr(), non_zero_len);
+        ptr::copy_nonoverlapping(non_zero.as_ptr(), buf.as_mut_ptr(), non_zero_len);
         buf.set_len(non_zero_len);
     }
     buf.reverse();  // Now little-endian for LSB-first divmod (digits pop MSB)
@@ -53,7 +53,7 @@ pub fn encode(input: &[u8]) -> String {
         #[cfg(target_arch = "x86_64")]
         {
             if non_zero_len >= 32 && std::arch::is_x86_feature_detected!("avx2") {
-                encode_simd_x86(&mut output, &mut buf);
+                encode_simd_x_x86(&mut output, &mut buf);
             } else {
                 encode_scalar(&mut output, &mut buf);
             }
@@ -61,7 +61,7 @@ pub fn encode(input: &[u8]) -> String {
 
         #[cfg(target_arch = "aarch64")]
         {
-            if non_zero_len >= 16 && std::arch::is_aarch64_feature_detected!("neon") {
+            if non_zero_len >= 16 && std::arch::is_aarch64_feature_detected("neon") {
                 encode_simd_arm(&mut output, &mut buf);
             } else {
                 encode_scalar(&mut output, &mut buf);
@@ -111,7 +111,7 @@ fn encode_scalar(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
 /// ~4x speedup on long payloads; unrolled magic mul ~1c/lane, correction <0.1% branches.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[inline]
-fn encode_simd_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
+fn encode_simd_x_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
     use std::arch::x86_64::{__m256i, _mm256_loadu_si256, _mm256_storeu_si256};
 
     const LANES: usize = 8;  // u32x8 for 32 bytes
@@ -125,7 +125,10 @@ fn encode_simd_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
             #[allow(clippy::cast_ptr_alignment)]
             let chunk_ptr = bytes.as_ptr().add(i).cast::<__m256i>();
             #[allow(clippy::cast_ptr_alignment)]
-            _mm256_storeu_si256(batch.as_mut_ptr().cast::<__m256i>(), _mm256_loadu_si256(chunk_ptr));
+            _mm256_storeu_si256(
+                batch.as_mut_ptr().cast::<__m256i>(),
+                _mm256_loadu_si256(chunk_ptr),
+            );
 
             // Batch to u32 array + unrolled divmod
             let mut u32_batch = [0u32; LANES];
@@ -154,7 +157,10 @@ fn encode_simd_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
             #[allow(clippy::cast_ptr_alignment)]
             let new_chunk_ptr = bytes.as_mut_ptr().add(i).cast::<__m256i>();
             #[allow(clippy::cast_ptr_alignment)]
-            _mm256_storeu_si256(new_chunk_ptr, _mm256_loadu_si256(batch.as_ptr().cast::<__m256i>()));
+            _mm256_storeu_si256(
+                new_chunk_ptr,
+                _mm256_loadu_si256(batch.as_ptr().cast::<__m256i>()),
+            );
         }
         i += BYTES_PER_BATCH;
     }
@@ -188,7 +194,7 @@ fn encode_simd_arm(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
             }
             let (q, r) = crate::simd::divmod_batch::<LANES>(u32_batch);
             for lane in 0..LANES {
-                output.push(VAL_TO_DIGIT[r[lane] as u8]);
+                output.push(VAL_TO_DIGIT[r[lane] as usize]);
                 let idx = lane * 4;
                 let q_bytes = q[lane].to_le_bytes();
                 batch[idx..idx + 4].copy_from_slice(&q_bytes);

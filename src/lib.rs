@@ -3,7 +3,7 @@
 //! No generics/multi-alphabets—hardcoded for perf. Targets 5x+ bs58-rs on BSV payloads.
 //! Exports: `encode(&[u8]) -> String`, `decode(&str) -> Result<Vec<u8>, DecodeError>` (no checksum).
 //! For checksum: `decode_full(&str, true)`. SIMD: AVX2 (x86) / NEON (ARM) dispatch; scalar fallback.
-//! Rust 1.80+ for std::simd. Usage: `cargo add bsv58`; benches via `cargo bench`.
+//! Rust 1.80+ stable. Usage: `cargo add bsv58`; benches via `cargo bench`.
 
 pub const ALPHABET: [u8; 58] =
     *b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -11,6 +11,9 @@ pub const ALPHABET: [u8; 58] =
 mod encode;
 mod decode;
 mod simd;
+
+#[cfg(feature = "simd")]
+pub use simd::{divmod_batch, horner_batch};
 
 /// Encodes bytes to Base58 string (Bitcoin alphabet, leading zeros as '1's).
 pub use encode::encode;
@@ -28,6 +31,7 @@ pub use decode::DecodeError;
 mod tests {
     use super::*;
     use hex_literal::hex;
+    use sha2::{Digest, Sha256};
 
     /// BSV test corpus: Addresses (w/checksum), txids, hashes.
     const CORPUS: &[(&[u8], &str)] = &[
@@ -104,7 +108,7 @@ mod tests {
 
     #[test]
     fn simd_smoke() {
-        // No panic on dispatch (scalar if no SIMD)
+        // No panic on dispatch (SIMD if feat/cpu flags)
         let bytes = b"hello world bsv58 test";
         let enc = encode(bytes);
         let dec = decode(&enc).unwrap();

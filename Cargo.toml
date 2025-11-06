@@ -15,11 +15,15 @@ path = "src/lib.rs"
 [dependencies]
 sha2 = "0.10"  # For BSV checksum
 
+[features]
+default = []
+simd = []  # Enable AVX2/NEON intrinsics (stable, runtime-detected)
+
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }  # For benchmarking
-hex-literal = "0.4"  # For tests
 base58 = "0.2"  # Control baseline (slower, generic)
 bs58 = "0.5"  # Reference baseline (optimized target)
+criterion = { version = "0.5", features = ["html_reports"] }  # For benchmarking
+hex-literal = "0.4"  # For tests
 
 [[bench]]
 name = "bench"

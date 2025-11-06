@@ -93,7 +93,8 @@ fn encode_scalar(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
         // Propagate div from low to high (little-endian)
         for b in bytes.iter_mut() {
             let temp = carry * 256 + u32::from(*b);
-            *b = (temp / 58) as u8; // safe: temp / 58 ≤ 255
+            #[allow(clippy::cast_possible_truncation)]
+            *b = (temp / 58) as u8;
             carry = temp % 58;
         }
         output.push(VAL_TO_DIGIT[carry as usize]);
@@ -134,7 +135,6 @@ fn encode_simd_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
             let (q, r) = crate::simd::divmod_batch::<LANES>(u32_batch);
             for lane in 0..LANES {
                 output.push(VAL_TO_DIGIT[r[lane] as usize]);
-                // Store quot back (low 4B per u32)
                 let idx = lane * 4;
                 let q_bytes = q[lane].to_le_bytes();
                 batch[idx..idx + 4].copy_from_slice(&q_bytes);
@@ -146,7 +146,7 @@ fn encode_simd_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
                 carry_sum += u64::from(qv);
             }
             #[allow(clippy::cast_possible_truncation)]
-            let carry_bytes = (carry_sum as u32).to_le_bytes(); // safe – carry never exceeds 32 bits
+            let carry_bytes = (carry_sum as u32).to_le_bytes();
             let copy_len = 4.min(bytes.len() - i);
             bytes[i..i + copy_len].copy_from_slice(&carry_bytes[..copy_len]);
 
@@ -194,7 +194,7 @@ fn encode_simd_arm(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
             }
 
             // Cascade sum
-            let mut carry_sum: u64 = q[0] as u64 + q[1] as u64 + q[2] as u64 + q[3] as u64;
+            let mut carry_sum: u64 = u64::from(q[0]) + u64::from(q[1]) + u64::from(q[2]) + u64::from(q[3]);
             #[allow(clippy::cast_possible_truncation)]
             let carry_bytes = (carry_sum as u32).to_le_bytes();
             let copy_len = 4.min(bytes.len() - i);

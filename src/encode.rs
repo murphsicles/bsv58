@@ -4,7 +4,6 @@
 //! arch-specific SIMD intrinsics (AVX2/NEON ~4x arith speedup), u64 scalar fallback.
 //! Perf: <5c/byte on AVX2 (unrolled magic mul div, fused carry sum); branch-free where possible.
 
-use crate::ALPHABET;
 use std::ptr;
 
 const VAL_TO_DIGIT: [u8; 58] = [

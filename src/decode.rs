@@ -17,7 +17,7 @@ pub enum DecodeError {
     InvalidLength,
 }
 
-/// Decodes a Base58 string (Bitcoin alphabet) to raw bytes (no checksum).
+/// Decodes a Base58 string (Bitcoin alphabet) to bytes (no checksum).
 ///
 /// # Errors
 /// - `InvalidChar(pos)`: Non-alphabet char at `pos`.
@@ -26,7 +26,7 @@ pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
     decode_full(input, false)
 }
 
-/// Decodes a Base58Check string (Bitcoin alphabet) to raw bytes, optionally validating checksum.
+/// Decodes a Base58Check string (Bitcoin alphabet) to bytes, optionally validating checksum.
 /// Validates BSV-style checksum if `validate_checksum=true` (default false for raw payloads).
 ///
 /// # Errors
@@ -154,7 +154,7 @@ fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<
 
             let horner = crate::simd::horner_batch::<N>(vals, &POWERS);
 
-            // Carry to output (u64 for large sum)
+            // Carry-prop to output (u64 for large sum)
             let mut carry: u64 = horner;
             for b in output.iter_mut() {
                 carry += (*b as u64) * 58;
@@ -302,6 +302,6 @@ mod tests {
     fn simd_dispatch() {
         // Smoke: No panic on dispatch (tests scalar if no feature)
         let _ = decode("n7UKu7Y5");
-        // Real SIMD tests via benches with --features simd
+        // Real SIMD tests via benches with --features SIMD
     }
 }

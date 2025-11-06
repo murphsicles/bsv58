@@ -1,6 +1,11 @@
 # bsv58 🫥
 
-[![Rust](https://img.shields.io/badge/Rust-1.91%2B-green.svg)](https://www.rust-lang.org/) [![Edition](https://img.shields.io/badge/Edition-2024-blue.svg)](https://doc.rust-lang.org/edition-guide/rust-2021/index.html) [![Crates.io](https://img.shields.io/crates/v/bsv58.svg)](https://crates.io/crates/bsv58) [![CI](https://img.shields.io/github/actions/workflow/status/murphsicles/bsv58/ci.yml?branch=main)](https://github.com/murphsicles/bsv58/actions) [![Licence](https://img.shields.io/badge/License-OpenBSV-yellow.svg)](https://opensv.org/)
+[![Rust](https://img.shields.io/badge/Rust-1.91%2B-green.svg)](https://www.rust-lang.org/)
+[![Edition](https://img.shields.io/badge/Edition-2024-blue.svg)](https://doc.rust-lang.org/edition-guide/rust-2021/index.html)
+[![Crates.io](https://img.shields.io/crates/v/bsv58.svg)](https://crates.io/crates/bsv58)
+[![Dependencies](https://deps.rs/repo/github/murphsicles/bsv58/status.svg)](https://deps.rs/repo/github/murphsicles/bsv58)
+[![CI](https://img.shields.io/github/actions/workflow/status/murphsicles/bsv58/ci.yml?branch=main)](https://github.com/murphsicles/bsv58/actions) 
+[![Licence](https://img.shields.io/badge/License-OpenBSV-yellow.svg)](https://opensv.org/)
 
 Minimal, SIMD-accelerated Base58 codec **exclusively for Bitcoin SV**. Hardcoded Bitcoin alphabet, zero bloat, and up to **5x faster than bs58-rs** on BSV workloads (hashes, txids, addresses). Optimized with AVX2 (x86) and NEON (ARM) for mobile-to-server dominance. Total size: ~5KB binary, no runtime deps beyond SHA2 for checksums.
 

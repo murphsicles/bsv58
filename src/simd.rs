@@ -15,20 +15,20 @@ const BASE: u64 = 58;
 #[must_use]
 #[inline]
 pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {
-    const MAGIC: u64 = 0x0DDF25201u64;  // Tuned reciprocal: 2^64 / 58 ≈ 0x0DDF25201
+    const MAGIC: u64 = 0x0DDF_25201u64;  // Tuned reciprocal: 2^64 / 58 ≈ 0x0DDF25201
 
     let mut quot = [0u32; N];
     let mut rem = [0u8; N];
     let mut carry: u32 = 0;
     for lane in 0..N {
         let val = vec[lane].wrapping_add(carry);
-        let val_u64 = val as u64;
+        let val_u64 = u64::from(val);
         let wide = val_u64.wrapping_mul(MAGIC);
         let q = (wide >> 32) as u32;
-        let p = q.wrapping_mul(BASE as u32);
-        let r = val.wrapping_sub(p) as u8;
-        if (r as u32) >= BASE as u32 {
-            rem[lane] = (r as u32 - BASE as u32) as u8;
+        let p = q.wrapping_mul(u32::from(BASE));
+        let r = u8::try_from(val.wrapping_sub(p)).unwrap();  // safe: %58 <256
+        if u32::from(r) >= u32::from(BASE) {
+            rem[lane] = u8::try_from(u32::from(r) - u32::from(BASE)).unwrap();
             quot[lane] = q.wrapping_add(1);
             carry = 0;
         } else {
@@ -49,7 +49,7 @@ pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {
 pub fn horner_batch<const N: usize>(vals: [u8; N], powers: &[u64; N]) -> u64 {
     let mut acc: u64 = 0;
     for i in 0..N {
-        acc = acc.wrapping_mul(BASE).wrapping_add((vals[i] as u64).wrapping_mul(powers[i]));
+        acc = acc.wrapping_mul(BASE).wrapping_add(u64::from(vals[i]).wrapping_mul(powers[i]));
     }
     acc
 }

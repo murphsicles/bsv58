@@ -26,7 +26,7 @@ pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
     decode_full(input, false)
 }
 
-/// Decodes a Base58Check string (Bitcoin alphabet) to bytes, optionally validating checksum.
+/// Decodes a `Base58Check` string (Bitcoin alphabet) to bytes, optionally validating checksum.
 /// Validates BSV-style checksum if `validate_checksum=true` (default false for raw payloads).
 ///
 /// # Errors
@@ -228,12 +228,12 @@ fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>
         return Err(DecodeError::InvalidLength);  // Can't checksum
     }
 
-    if validate_checksum {
+    if valid_checksum {
         // BSV standard: Last 4 bytes == first 4 of double-SHA256(payload[:-4])
         let payload = &output[..output.len() - 4];
         let hash1 = Sha256::digest(payload);  // Single SHA256
-        let hash2 = Sha256::digest(hash1);    // Double
-        let expected_checksum = &hash2[0..4]; // Direct slice
+        let hash2 = Sha256::digest(hash1);   // Double
+        let expected_checksum = &hash2[0..4];  // Direct slice
         let actual_checksum = &output[output.len() - 4..];
         if expected_checksum != actual_checksum {
             return Err(DecodeError::Checksum);

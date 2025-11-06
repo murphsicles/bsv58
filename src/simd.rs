@@ -25,10 +25,10 @@ pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {
         let val_u64 = u64::from(val);
         let wide = val_u64.wrapping_mul(MAGIC);
         let q = (wide >> 32) as u32;
-        let p = q.wrapping_mul(u32::from(BASE));
+        let p = q.wrapping_mul(58u32);
         let r = u8::try_from(val.wrapping_sub(p)).unwrap();  // safe: %58 <256
-        if u32::from(r) >= u32::from(BASE) {
-            rem[lane] = u8::try_from(u32::from(r) - u32::from(BASE)).unwrap();
+        if u32::from(r) >= 58u32 {
+            rem[lane] = u8::try_from(u32::from(r) - 58u32).unwrap();
             quot[lane] = q.wrapping_add(1);
             carry = 0;
         } else {

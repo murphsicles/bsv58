@@ -86,6 +86,7 @@ pub fn encode(input: &[u8]) -> String {
 /// Scalar fallback: Byte-by-byte carry propagation (u64 handles ~8 bytes before /58).
 /// For short inputs (<16 bytes) or no SIMD. Optimizer unrolls ~4-8 iters naturally.
 /// Enhanced: Wrapping ops for safety on large inputs.
+#[allow(clippy::cast_possible_truncation)] // safe: temp / 58 ≤ 255
 #[inline]
 fn encode_scalar(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
     while bytes.iter().any(|&b| b != 0) {
@@ -93,7 +94,6 @@ fn encode_scalar(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
         // Propagate div from low to high (little-endian)
         for b in bytes.iter_mut() {
             let temp = carry * 256 + u32::from(*b);
-            #[allow(clippy::cast_possible_truncation)]
             *b = (temp / 58) as u8;
             carry = temp % 58;
         }

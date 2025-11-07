@@ -18,7 +18,7 @@ const BASE: u64 = 58;
 #[must_use]
 #[inline]
 pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {
-    const MAGIC: u64 = 0x0DDF_25201u64;  // Tuned reciprocal: 2^64 / 58 ≈ 0x0DDF25201
+    const MAGIC: u64 = 0x0DDF_25201u64; // Tuned reciprocal: 2^64 / 58 ≈ 0x0DDF25201
 
     let mut quot = [0u32; N];
     let mut rem = [0u8; N];
@@ -29,7 +29,7 @@ pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {
         let wide = val_u64.wrapping_mul(MAGIC);
         let q = (wide >> 32) as u32;
         let p = q.wrapping_mul(58u32);
-        let r = u8::try_from(val.wrapping_sub(p)).unwrap();  // safe: %58 <256
+        let r = u8::try_from(val.wrapping_sub(p)).unwrap(); // safe: %58 <256
         if u32::from(r) >= 58u32 {
             rem[lane] = u8::try_from(u32::from(r) - 58u32).unwrap();
             quot[lane] = q.wrapping_add(1);
@@ -52,7 +52,9 @@ pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {
 pub fn horner_batch<const N: usize>(vals: [u8; N], powers: &[u64; N]) -> u64 {
     let mut acc: u64 = 0;
     for i in 0..N {
-        acc = acc.wrapping_mul(BASE).wrapping_add(u64::from(vals[i]).wrapping_mul(powers[i]));
+        acc = acc
+            .wrapping_mul(BASE)
+            .wrapping_add(u64::from(vals[i]).wrapping_mul(powers[i]));
     }
     acc
 }
@@ -73,7 +75,7 @@ mod tests {
     #[test]
     fn test_divmod_correction() {
         // Case needing +1: 57*58 + 57 = 3364-1? Test edge
-        let input = [3359u32, 0, 0, 0];  // 58^2 -5, expect quot=57, rem=53
+        let input = [3359u32, 0, 0, 0]; // 58^2 -5, expect quot=57, rem=53
         let (q, r) = divmod_batch::<4>(input);
         assert_eq!(q[0], 57);
         assert_eq!(r[0], 53);
@@ -84,6 +86,6 @@ mod tests {
         let vals = [1u8, 2, 3, 4];
         let powers = [1u64, 58, 3364, 195112];
         let horner = horner_batch::<4>(vals, &powers);
-        assert_eq!(horner, 1 + 2*58 + 3*3364 + 4*195112);  // 782449
+        assert_eq!(horner, 1 + 2 * 58 + 3 * 3364 + 4 * 195112); // 782449
     }
 }

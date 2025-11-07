@@ -109,7 +109,6 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<()
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<(), DecodeError> {
     #[cfg(target_arch = "x86_64")]
-    use std::arch::x86_64::{__m256i, _mm256_loadu_si256, _mm256_storeu_si256};
     const N: usize = 8;
     const POWERS: [u64; N] = [
         2_207_984_167_552,  // 58^7

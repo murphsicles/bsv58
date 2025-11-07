@@ -12,6 +12,9 @@ const BASE: u64 = 58;
 /// Correction: Unrolled per-lane adjust (rare over/under by 1; <2% branches).
 /// Fixed N: Compile-time lanes (e.g., 4/8); u32 for arith.
 /// Safety: Unsigned, no overflow in BSV range (max ~2^400 bits).
+///
+/// # Panics
+/// Panics if the remainder cannot be converted to u8 (should not happen for valid inputs).
 #[must_use]
 #[inline]
 pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {

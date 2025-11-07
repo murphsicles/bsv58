@@ -49,7 +49,7 @@ pub fn encode(input: &[u8]) -> String {
         #[cfg(target_arch = "x86_64")]
         {
             if non_zero_len >= 32 && std::arch::is_x86_feature_detected!("avx2") {
-                encode_simd_x86(&mut output, &mut buf);
+                encode_simd_x_x86(&mut output, &mut buf);
             } else {
                 encode_scalar(&mut output, &mut buf);
             }

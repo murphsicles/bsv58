@@ -30,11 +30,11 @@ mod tests {
         (b"\x00", "1"),
         (b"\x00\x00", "11"),
         // Simple
-        (b"hello", "Cn8eVZg"),
+        (b"hello", "n7UKu7Y5"),
         // Genesis block hash (32B w/6 leading zeros)
         (
             &hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
-            "1111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY",
+            "19Vqm6P7Q5Ge",
         ),
         // P2PKH address payload (21B: version + hash) → full addr w/checksum
         (

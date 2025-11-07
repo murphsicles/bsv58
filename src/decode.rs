@@ -119,7 +119,7 @@ fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<
         3_364,             // 58^2
         58,                // 58^1
         1,                 // 58^0
-];
+    ];
     let mut i = 0;
     while i + N <= digits.len() {
         let mut vals = [0u8; N];

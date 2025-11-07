@@ -27,7 +27,7 @@ pub fn encode(input: &[u8]) -> String {
     )]
     let cap = ((input.len() as f64 * 1.3652).ceil() as usize).max(1);
     let mut output = Vec::with_capacity(cap);
-    // Count leading zero bytes (map to leading '1' chars)
+    // Count leading zeros (map to leading '1' chars)
     let zeros = input.iter().take_while(|&&b| b == 0).count();
     let non_zero = &input[zeros..];
     let non_zero_len = non_zero.len();
@@ -35,20 +35,19 @@ pub fn encode(input: &[u8]) -> String {
         // All zeros: Fast-path with repeated '1's
         return unsafe { String::from_utf8_unchecked(vec![b'1'; zeros]) };
     }
-    // Unsafe zero-copy: Copy non-zero part to temp buf, then reverse for little-endian divmod
-    // Safety: src/dst non-overlapping (new Vec), len checked, ASCII output unchecked (alphabet safe).
+    // Unsafe zero-copy: Copy non-zero part to temp buf, reverse for little-endian divmod
     let mut buf: Vec<u8> = Vec::with_capacity(non_zero_len);
     unsafe {
         ptr::copy_nonoverlapping(non_zero.as_ptr(), buf.as_mut_ptr(), non_zero_len);
         buf.set_len(non_zero_len);
     }
-    buf.reverse(); // Now little-endian for LSB-first divmod (digits pop MSB)
+    buf.reverse(); // LSB-first for divmod
     // Dispatch SIMD or scalar
     #[cfg(feature = "simd")]
     {
         #[cfg(target_arch = "x86_64")]
         {
-            if non_zero_len >= 64 && std::arch::is_x86_feature_detected!("avx2") {
+            if non_zero_len >= 32 && std::arch::is_x86_feature_detected!("avx2") {
                 encode_simd_x86(&mut output, &mut buf);
             } else {
                 encode_scalar(&mut output, &mut buf);
@@ -56,7 +55,7 @@ pub fn encode(input: &[u8]) -> String {
         }
         #[cfg(target_arch = "aarch64")]
         {
-            if non_zero_len >= 32 && std::arch::is_aarch64_feature_detected!("neon") {
+            if non_zero_len >= 16 && std::arch::is_aarch64_feature_detected("neon") {
                 encode_simd_arm(&mut output, &mut buf);
             } else {
                 encode_scalar(&mut output, &mut buf);
@@ -67,141 +66,103 @@ pub fn encode(input: &[u8]) -> String {
     {
         encode_scalar(&mut output, &mut buf);
     }
-    // Reverse digits: Divmod produces LSB-first, but Base58 is MSB-first
+    // Reverse digits (LSB-first to MSB-first)
     output.reverse();
     // Prepend leading '1's for zeros
     output.splice(0..0, std::iter::repeat_n(b'1', zeros));
-    // To String: Unchecked UTF-8 (all chars ASCII 0x21-0x7A, valid)
+    // To String: Unchecked UTF-8 (alphabet ASCII-safe)
     unsafe { String::from_utf8_unchecked(output) }
 }
-/// Scalar fallback: Byte-by-byte carry propagation (u64 handles ~8 bytes before /58).
-/// For short inputs (<16 bytes) or no SIMD. Optimizer unrolls ~4-8 iters naturally.
-/// Enhanced: Wrapping ops for safety on large inputs.
-#[allow(clippy::cast_possible_truncation)] // safe: temp / 58 <= 255
-#[inline]
+/// Scalar fallback: Byte-by-byte carry propagation.
+#[allow(clippy::cast_possible_truncation)]
 fn encode_scalar(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
     while bytes.iter().any(|&b| b != 0) {
         let mut carry: u32 = 0;
-        // Propagate div from low to high (little-endian)
+        // Forward pass: low to high (since reversed LE)
         for b in bytes.iter_mut() {
-            let temp = carry * 256 + u32::from(*b);
+            let temp = u32::from(*b) + carry * 256;
             *b = (temp / 58) as u8;
             carry = temp % 58;
         }
         output.push(VAL_TO_DIGIT[carry as usize]);
-        // Trim leading (high) zeros from end: O(1) amortized
-        while !bytes.is_empty() && *bytes.last().unwrap() == 0 {
-            bytes.pop();
+        // Trim leading zeros from high end (now front after reverse)
+        while !bytes.is_empty() && *bytes[0] == 0 {
+            bytes.remove(0);
         }
     }
 }
-/// x86 AVX2 SIMD encode: Batch 8 u32 (32 bytes) via intrinsics (256-bit).
-/// ~4x speedup on long payloads; unrolled magic mul ~1c/lane, correction <0.1% branches.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[inline]
 fn encode_simd_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
-    use std::arch::x86_64::{__m256i, _mm256_loadu_si256, _mm256_storeu_si256};
-    const LANES: usize = 8; // u32x8 for 32 bytes
-    const BYTES_PER_BATCH: usize = 4 * LANES;
+    use std::arch::x86_64::*;
+    const LANES: usize = 8;
+    const BYTES_PER_BATCH: usize = 32;
     let mut i = 0;
     while i + BYTES_PER_BATCH <= bytes.len() {
         unsafe {
-            // Load 32 u8 as __m256i
             let mut batch = [0u8; BYTES_PER_BATCH];
-            #[allow(clippy::cast_ptr_alignment)]
-            let chunk_ptr = bytes.as_ptr().add(i).cast::<__m256i>();
-            #[allow(clippy::cast_ptr_alignment)]
-            _mm256_storeu_si256(
-                batch.as_mut_ptr().cast::<__m256i>(),
-                _mm256_loadu_si256(chunk_ptr),
-            );
-            // Batch to u32 array + unrolled divmod
+            _mm256_storeu_si256(batch.as_mut_ptr() as *mut __m256i, _mm256_loadu_si256(bytes.as_ptr().add(i) as *const __m256i));
             let mut u32_batch = [0u32; LANES];
-            for (lane, item) in u32_batch.iter_mut().enumerate().take(LANES) {
+            for lane in 0..LANES {
                 let idx = lane * 4;
-                *item = u32::from_le_bytes([
-                    batch[idx],
-                    batch[idx + 1],
-                    batch[idx + 2],
-                    batch[idx + 3],
-                ]);
+                u32_batch[lane] = u32::from_le_bytes([batch[idx], batch[idx+1], batch[idx+2], batch[idx+3]]);
             }
             let (q, r) = crate::simd::divmod_batch::<LANES>(u32_batch);
             for lane in 0..LANES {
                 output.push(VAL_TO_DIGIT[r[lane] as usize]);
                 let idx = lane * 4;
                 let q_bytes = q[lane].to_le_bytes();
-                batch[idx..idx + 4].copy_from_slice(&q_bytes);
+                batch[idx..idx+4].copy_from_slice(&q_bytes);
             }
-            // Cascade carry: Sum q + store full batch
             let mut carry_sum: u64 = 0;
             for &qv in &q {
                 carry_sum += u64::from(qv);
             }
-            #[allow(clippy::cast_possible_truncation)]
-            let carry_bytes = (carry_sum as u32).to_le_bytes();
+            let carry = (carry_sum as u32).to_le_bytes();
             let copy_len = 4.min(bytes.len() - i);
-            bytes[i..i + copy_len].copy_from_slice(&carry_bytes[..copy_len]);
-            #[allow(clippy::cast_ptr_alignment)]
-            let new_chunk_ptr = bytes.as_mut_ptr().add(i).cast::<__m256i>();
-            #[allow(clippy::cast_ptr_alignment)]
-            _mm256_storeu_si256(
-                new_chunk_ptr,
-                _mm256_loadu_si256(batch.as_ptr().cast::<__m256i>()),
-            );
+            bytes[i..i+copy_len].copy_from_slice(&carry[..copy_len]);
+            _mm256_storeu_si256(bytes.as_mut_ptr().add(i) as *mut __m256i, _mm256_loadu_si256(batch.as_ptr() as *const __m256i));
         }
         i += BYTES_PER_BATCH;
     }
-    // Tail scalar
     encode_scalar(output, &mut bytes[i..].to_vec());
 }
-/// ARM NEON SIMD encode: Batch 4 u32 (16 bytes) via intrinsics (128-bit).
-/// ~2.5x speedup; unrolled magic mul ~1.5c/lane, correction unrolled (pred >99%).
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
 #[inline]
 fn encode_simd_arm(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
-    use std::arch::aarch64::{uint8x16_t, vld1q_u8, vst1q_u8};
+    use std::arch::aarch64::*;
     const LANES: usize = 4;
-    const BYTES_PER_BATCH: usize = 4 * LANES;
+    const BYTES_PER_BATCH: usize = 16;
     let mut i = 0;
     while i + BYTES_PER_BATCH <= bytes.len() {
         unsafe {
             let mut batch = [0u8; BYTES_PER_BATCH];
-            let chunk: uint8x16_t = vld1q_u8(bytes.as_ptr().add(i));
+            let chunk = vld1q_u8(bytes.as_ptr().add(i));
             vst1q_u8(batch.as_mut_ptr(), chunk);
-            // Batch to u32 + divmod
             let mut u32_batch = [0u32; LANES];
-            for (lane, item) in u32_batch.iter_mut().enumerate().take(LANES) {
+            for lane in 0..LANES {
                 let idx = lane * 4;
-                *item = u32::from_le_bytes([
-                    batch[idx],
-                    batch[idx + 1],
-                    batch[idx + 2],
-                    batch[idx + 3],
-                ]);
+                u32_batch[lane] = u32::from_le_bytes([batch[idx], batch[idx+1], batch[idx+2], batch[idx+3]]);
             }
             let (q, r) = crate::simd::divmod_batch::<LANES>(u32_batch);
             for lane in 0..LANES {
                 output.push(VAL_TO_DIGIT[r[lane] as usize]);
                 let idx = lane * 4;
                 let q_bytes = q[lane].to_le_bytes();
-                batch[idx..idx + 4].copy_from_slice(&q_bytes);
+                batch[idx..idx+4].copy_from_slice(&q_bytes);
             }
-            // Cascade sum
             let mut carry_sum: u64 = 0;
             for &qv in &q {
                 carry_sum += u64::from(qv);
             }
-            #[allow(clippy::cast_possible_truncation)]
-            let carry_bytes = (carry_sum as u32).to_le_bytes();
+            let carry = (carry_sum as u32).to_le_bytes();
             let copy_len = 4.min(bytes.len() - i);
-            bytes[i..i + copy_len].copy_from_slice(&carry_bytes[..copy_len]);
+            bytes[i..i+copy_len].copy_from_slice(&carry[..copy_len]);
             let new_chunk = vld1q_u8(batch.as_ptr());
             vst1q_u8(bytes.as_mut_ptr().add(i), new_chunk);
         }
         i += BYTES_PER_BATCH;
     }
-    // Tail scalar
     encode_scalar(output, &mut bytes[i..].to_vec());
 }
 #[cfg(test)]

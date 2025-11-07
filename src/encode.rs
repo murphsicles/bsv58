@@ -7,24 +7,28 @@
 use std::ptr;
 
 const VAL_TO_DIGIT: [u8; 58] = [
-    b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9',  // 0-8
-    b'A', b'B', b'C', b'D', b'E', b'F', b'G', b'H',        // 9-16
-    b'J', b'K', b'L', b'M', b'N', b'P', b'Q', b'R',        // 17-24
-    b'S', b'T', b'U', b'V', b'W', b'X', b'Y', b'Z',        // 25-32
-    b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h',        // 33-40
-    b'i', b'j', b'k', b'm', b'n', b'o', b'p', b'q',        // 41-48
-    b'r', b's', b't', b'u', b'v', b'w', b'x', b'y', b'z',  // 49-57
+    b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', // 0-8
+    b'A', b'B', b'C', b'D', b'E', b'F', b'G', b'H', // 9-16
+    b'J', b'K', b'L', b'M', b'N', b'P', b'Q', b'R', // 17-24
+    b'S', b'T', b'U', b'V', b'W', b'X', b'Y', b'Z', // 25-32
+    b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', // 33-40
+    b'i', b'j', b'k', b'm', b'n', b'o', b'p', b'q', // 41-48
+    b'r', b's', b't', b'u', b'v', b'w', b'x', b'y', b'z', // 49-57
 ];
 
 #[must_use]
 #[inline]
 pub fn encode(input: &[u8]) -> String {
     if input.is_empty() {
-        return String::new();  // Empty input -> empty string
+        return String::new(); // Empty input -> empty string
     }
 
     // Capacity heuristic: Exact via log(256)/log(58) ≈ 1.3652, +1 safety
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
     let cap = ((input.len() as f64 * 1.3652).ceil() as usize).max(1);
     let mut output = Vec::with_capacity(cap);
 
@@ -45,7 +49,7 @@ pub fn encode(input: &[u8]) -> String {
         ptr::copy_nonoverlapping(non_zero.as_ptr(), buf.as_mut_ptr(), non_zero_len);
         buf.set_len(non_zero_len);
     }
-    buf.reverse();  // Now little-endian for LSB-first divmod (digits pop MSB)
+    buf.reverse(); // Now little-endian for LSB-first divmod (digits pop MSB)
 
     // Dispatch SIMD or scalar
     #[cfg(feature = "simd")]
@@ -114,7 +118,7 @@ fn encode_scalar(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
 fn encode_simd_x_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
     use std::arch::x86_64::{__m256i, _mm256_loadu_si256, _mm256_storeu_si256};
 
-    const LANES: usize = 8;  // u32x8 for 32 bytes
+    const LANES: usize = 8; // u32x8 for 32 bytes
     const BYTES_PER_BATCH: usize = 4 * LANES;
     let mut i = 0;
 
@@ -134,7 +138,12 @@ fn encode_simd_x_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
             let mut u32_batch = [0u32; LANES];
             for (lane, item) in u32_batch.iter_mut().enumerate().take(LANES) {
                 let idx = lane * 4;
-                *item = u32::from_le_bytes([batch[idx], batch[idx + 1], batch[idx + 2], batch[idx + 3]]);
+                *item = u32::from_le_bytes([
+                    batch[idx],
+                    batch[idx + 1],
+                    batch[idx + 2],
+                    batch[idx + 3],
+                ]);
             }
             let (q, r) = crate::simd::divmod_batch::<LANES>(u32_batch);
             for lane in 0..LANES {
@@ -190,7 +199,12 @@ fn encode_simd_arm(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
             let mut u32_batch = [0u32; LANES];
             for (lane, item) in u32_batch.iter_mut().enumerate().take(LANES) {
                 let idx = lane * 4;
-                *item = u32::from_le_bytes([batch[idx], batch[idx + 1], batch[idx + 2], batch[idx + 3]]);
+                *item = u32::from_le_bytes([
+                    batch[idx],
+                    batch[idx + 1],
+                    batch[idx + 2],
+                    batch[idx + 3],
+                ]);
             }
             let (q, r) = crate::simd::divmod_batch::<LANES>(u32_batch);
             for lane in 0..LANES {

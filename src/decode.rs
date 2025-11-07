@@ -40,17 +40,21 @@ pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
 #[inline]
 pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {
     if input.is_empty() {
-        return Ok(vec![]);  // Empty -> empty
+        return Ok(vec![]); // Empty -> empty
     }
 
-    let bytes = input.as_bytes();  // Borrow as &[u8] for zero-copy
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+    let bytes = input.as_bytes(); // Borrow as &[u8] for zero-copy
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
     let cap = ((bytes.len() as f64 * 0.733).ceil() as usize).max(1);
     let mut output = Vec::with_capacity(cap);
 
     // Count leading '1's (map to leading zero bytes)
     let zeros = bytes.iter().take_while(|&&b| b == b'1').count();
-    let digits = &bytes[zeros..];  // Skip leading '1's
+    let digits = &bytes[zeros..]; // Skip leading '1's
 
     if digits.is_empty() {
         // All zeros: resize with zeros
@@ -225,15 +229,15 @@ fn decode_simd_arm(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<
 /// Finish: BSV checksum validation + length check + strip checksum.
 fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {
     if output.len() < 4 {
-        return Err(DecodeError::InvalidLength);  // Can't checksum
+        return Err(DecodeError::InvalidLength); // Can't checksum
     }
 
     if validate_checksum {
         // BSV standard: Last 4 bytes == first 4 of double-SHA256(payload[:-4])
         let payload = &output[..output.len() - 4];
-        let hash1 = Sha256::digest(payload);  // Single SHA256
-        let hash2 = Sha256::digest(hash1);   // Double
-        let expected_checksum = &hash2[0..4];  // Direct slice
+        let hash1 = Sha256::digest(payload); // Single SHA256
+        let hash2 = Sha256::digest(hash1); // Double
+        let expected_checksum = &hash2[0..4]; // Direct slice
         let actual_checksum = &output[output.len() - 4..];
         if expected_checksum != actual_checksum {
             return Err(DecodeError::Checksum);
@@ -249,7 +253,7 @@ fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>
 /// Static: ~128 bytes, lookup O(1). Ignores non-ASCII (BSV is ASCII-safe).
 const DIGIT_TO_VAL: [u8; 128] = {
     let mut table = [255u8; 128];
-    let alphabet = &ALPHABET;  // Borrow to avoid iter in const
+    let alphabet = &ALPHABET; // Borrow to avoid iter in const
     let mut idx = 0u8;
     let mut i = 0usize;
     while i < 58 {
@@ -278,7 +282,10 @@ mod tests {
         assert_eq!(decode(encoded), Ok(genesis.to_vec()));
 
         // Invalid char
-        assert!(matches!(decode("invalid!"), Err(DecodeError::InvalidChar(7))));
+        assert!(matches!(
+            decode("invalid!"),
+            Err(DecodeError::InvalidChar(7))
+        ));
     }
 
     #[test]
@@ -290,14 +297,20 @@ mod tests {
         assert_eq!(decode_full(addr, true).unwrap(), expected_payload.to_vec());
 
         // Invalid checksum example (flip a bit)
-        let invalid_addr = "1BitcoinEaterAddressDontSendf59kuF";  // Last char wrong
-        assert!(matches!(decode_full(invalid_addr, true), Err(DecodeError::Checksum)));
+        let invalid_addr = "1BitcoinEaterAddressDontSendf59kuF"; // Last char wrong
+        assert!(matches!(
+            decode_full(invalid_addr, true),
+            Err(DecodeError::Checksum)
+        ));
     }
 
     #[test]
     fn decode_length_error() {
         // Short: "12" -> ~1 byte <4
-        assert!(matches!(decode_full("12", true), Err(DecodeError::InvalidLength)));
+        assert!(matches!(
+            decode_full("12", true),
+            Err(DecodeError::InvalidLength)
+        ));
     }
 
     #[test]

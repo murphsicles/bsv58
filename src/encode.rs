@@ -35,20 +35,21 @@ pub fn encode(input: &[u8]) -> String {
         // All zeros: Fast-path with repeated '1's
         return unsafe { String::from_utf8_unchecked(vec![b'1'; zeros]) };
     }
-    // Unsafe zero-copy: Copy non-zero part to temp buf (MSB first, no reverse)
+    // Unsafe zero-copy: Copy non-zero part to temp buf, then reverse for little-endian divmod
     // Safety: src/dst non-overlapping (new Vec), len checked, ASCII output unchecked (alphabet safe).
     let mut buf: Vec<u8> = Vec::with_capacity(non_zero_len);
     unsafe {
         ptr::copy_nonoverlapping(non_zero.as_ptr(), buf.as_mut_ptr(), non_zero_len);
         buf.set_len(non_zero_len);
     }
+    buf.reverse(); // Now little-endian for LSB-first divmod (digits pop MSB)
     // Dispatch SIMD or scalar
     #[cfg(feature = "simd")]
     {
         #[cfg(target_arch = "x86_64")]
         {
             if non_zero_len >= 64 && std::arch::is_x86_feature_detected!("avx2") {
-                encode_simd_x_x86(&mut output, &mut buf);
+                encode_simd_x86(&mut output, &mut buf);
             } else {
                 encode_scalar(&mut output, &mut buf);
             }
@@ -79,17 +80,18 @@ pub fn encode(input: &[u8]) -> String {
 #[allow(clippy::cast_possible_truncation)] // safe: temp / 58 <= 255
 #[inline]
 fn encode_scalar(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
-    let mut rem: u32 = 0;
     while bytes.iter().any(|&b| b != 0) {
+        let mut carry: u32 = 0;
+        // Propagate div from low to high (little-endian)
         for b in bytes.iter_mut() {
-            let temp = rem * 256 + u32::from(*b);
+            let temp = carry * 256 + u32::from(*b);
             *b = (temp / 58) as u8;
-            rem = temp % 58;
+            carry = temp % 58;
         }
-        output.push(VAL_TO_DIGIT[rem as usize]);
-        // Trim leading (high) zeros from start: O(1) amortized
-        while !bytes.is_empty() && *bytes.first().unwrap() == 0 {
-            bytes.remove(0);
+        output.push(VAL_TO_DIGIT[carry as usize]);
+        // Trim leading (high) zeros from end: O(1) amortized
+        while !bytes.is_empty() && *bytes.last().unwrap() == 0 {
+            bytes.pop();
         }
     }
 }
@@ -97,7 +99,7 @@ fn encode_scalar(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
 /// ~4x speedup on long payloads; unrolled magic mul ~1c/lane, correction <0.1% branches.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[inline]
-fn encode_simd_x_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
+fn encode_simd_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
     use std::arch::x86_64::{__m256i, _mm256_loadu_si256, _mm256_storeu_si256};
     const LANES: usize = 8; // u32x8 for 32 bytes
     const BYTES_PER_BATCH: usize = 4 * LANES;
@@ -228,9 +230,9 @@ mod tests {
     }
     #[test]
     fn encode_large() {
-        let large = vec![0x42u8; 50];
+        let large = vec![0u8; 50];
         let encoded = encode(&large);
-        assert!(encoded.len() >= 68);
+        assert_eq!(encoded, "1".repeat(68));
     }
     #[test]
     fn simd_dispatch() {

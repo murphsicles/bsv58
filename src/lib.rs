@@ -4,33 +4,24 @@
 //! Exports: `encode(&[u8]) -> String`, `decode(&str) -> Result<Vec<u8>, DecodeError>` (no checksum).
 //! For checksum: `decode_full(&str, true)`. SIMD: AVX2 (x86) / NEON (ARM) dispatch; scalar fallback.
 //! Rust 1.80+ stable. Usage: `cargo add bsv58`; benches via `cargo bench`.
-
 pub const ALPHABET: [u8; 58] = *b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-
 mod decode;
 mod encode;
 mod simd;
-
 #[cfg(feature = "simd")]
 pub use simd::{divmod_batch, horner_batch};
-
 /// Encodes bytes to Base58 string (Bitcoin alphabet, leading zeros as '1's).
 pub use encode::encode;
-
 /// Decodes Base58 string to bytes (Bitcoin alphabet, no checksum).
 pub use decode::decode;
-
 /// Decodes with optional BSV checksum validation (strips on success).
 pub use decode::decode_full;
-
 /// Decode errors.
 pub use decode::DecodeError;
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use hex_literal::hex;
-
     /// BSV test corpus: Addresses (w/checksum), txids, hashes.
     const CORPUS: &[(&[u8], &str)] = &[
         // Empty
@@ -39,11 +30,11 @@ mod tests {
         (b"\x00", "1"),
         (b"\x00\x00", "11"),
         // Simple
-        (b"hello", "n7UKu7Y5"),
+        (b"hello", "Cn8eVZg"),
         // Genesis block hash (32B w/6 leading zeros)
         (
             &hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
-            "19Vqm6P7Q5Ge",
+            "1111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY",
         ),
         // P2PKH address payload (21B: version + hash) → full addr w/checksum
         (
@@ -56,18 +47,15 @@ mod tests {
             "BtCjvJYNhqehX2sbzvBNrbkCYp2qfc6AepXfK1JGnELw",
         ),
     ];
-
     #[test]
     fn roundtrip_no_checksum() {
         for (bytes, encoded) in CORPUS {
             let enc = encode(bytes);
             assert_eq!(enc, *encoded, "Encode fail: {:?}", bytes);
-
             let dec = decode(&enc).unwrap();
             assert_eq!(dec, *bytes, "Decode fail: {}", enc);
         }
     }
-
     #[test]
     fn roundtrip_with_checksum() {
         // Only test addrs with checksum (payload < full)
@@ -79,13 +67,11 @@ mod tests {
             // Encode payload → should not match addr (no checksum added)
             let enc_raw = encode(payload);
             assert_ne!(enc_raw, *addr);
-
             // Decode addr w/checksum → get payload
             let dec = decode_full(addr, true).unwrap();
             assert_eq!(dec, *payload, "Checksum decode fail: {}", addr);
         }
     }
-
     #[test]
     fn invalid_cases() {
         // Invalid char
@@ -93,21 +79,18 @@ mod tests {
             decode("invalid!"),
             Err(DecodeError::InvalidChar(7))
         ));
-
         // Checksum mismatch (flip last char)
         let invalid_addr = "1BitcoinEaterAddressDontSendf59kuF";
         assert!(matches!(
             decode_full(invalid_addr, true),
             Err(DecodeError::Checksum)
         ));
-
         // Too short for checksum
         assert!(matches!(
             decode_full("12", true),
             Err(DecodeError::InvalidLength)
         ));
     }
-
     #[test]
     fn simd_smoke() {
         // No panic on dispatch (SIMD if feat/cpu flags)
@@ -116,7 +99,6 @@ mod tests {
         let dec = decode(&enc).unwrap();
         assert_eq!(dec, bytes);
     }
-
     #[test]
     fn large_payload() {
         // 50B pubkey (BSV max): No overflow

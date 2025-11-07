@@ -26,7 +26,7 @@ pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
     decode_full(input, false)
 }
 
-/// Decodes a Base58Check string (Bitcoin alphabet) to bytes, optionally validating checksum.
+/// Decodes a `Base58Check` string (Bitcoin alphabet) to bytes, optionally validating checksum.
 /// Validates BSV-style checksum if `validate_checksum=true` (default false for raw payloads).
 ///
 /// # Errors

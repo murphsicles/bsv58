@@ -4,7 +4,6 @@
 //! Widths: N=8 (x86 256-bit sim), N=4 (ARM 128-bit sim) – tuned for lane efficiency.
 //! Reciprocal: Magic mul approx for div (fast, ~1% correction via unrolled fixup).
 //! No deps beyond std; runtime detect via `is_*_feature_detected!`.
-const BASE: u64 = 58;
 /// Unrolled divmod: Array / BASE -> quot, % BASE -> rem (u8).
 /// Uses fixed-point reciprocal mul: (vec * MAGIC >> 32) ≈ vec / 58 (u32-tuned).
 /// Correction: Unrolled per-lane adjust (rare over/under by 1; <2% branches).

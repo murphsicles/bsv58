@@ -5,11 +5,10 @@
 //! For checksum: `decode_full(&str, true)`. SIMD: AVX2 (x86) / NEON (ARM) dispatch; scalar fallback.
 //! Rust 1.80+ stable. Usage: `cargo add bsv58`; benches via `cargo bench`.
 
-pub const ALPHABET: [u8; 58] =
-    *b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+pub const ALPHABET: [u8; 58] = *b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
-mod encode;
 mod decode;
+mod encode;
 mod simd;
 
 #[cfg(feature = "simd")]
@@ -73,9 +72,10 @@ mod tests {
     #[test]
     fn roundtrip_with_checksum() {
         // Only test addrs with checksum (payload < full)
-        let addr_cases: &[(&[u8], &str)] = &[
-            (&hex!("00759d6677091e973b9e9d99f19c68fbf43e3f05f9"), "1BitcoinEaterAddressDontSendf59kuE"),
-        ];
+        let addr_cases: &[(&[u8], &str)] = &[(
+            &hex!("00759d6677091e973b9e9d99f19c68fbf43e3f05f9"),
+            "1BitcoinEaterAddressDontSendf59kuE",
+        )];
         for (payload, addr) in addr_cases {
             // Encode payload → should not match addr (no checksum added)
             let enc_raw = encode(payload);
@@ -103,7 +103,10 @@ mod tests {
         ));
 
         // Too short for checksum
-        assert!(matches!(decode_full("12", true), Err(DecodeError::InvalidLength)));
+        assert!(matches!(
+            decode_full("12", true),
+            Err(DecodeError::InvalidLength)
+        ));
     }
 
     #[test]
@@ -118,10 +121,10 @@ mod tests {
     #[test]
     fn large_payload() {
         // 50B pubkey (BSV max): No overflow
-        let pubkey = vec![0x42u8; 50];  // Dummy
+        let pubkey = vec![0x42u8; 50]; // Dummy
         let enc = encode(&pubkey);
         let dec = decode(&enc).unwrap();
         assert_eq!(dec, pubkey);
-        assert!(enc.len() >= 68);  // ~1.36x
+        assert!(enc.len() >= 68); // ~1.36x
     }
 }

@@ -8,8 +8,6 @@ pub const ALPHABET: [u8; 58] = *b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmn
 mod decode;
 mod encode;
 mod simd;
-#[cfg(feature = "simd")]
-pub use simd::{divmod_batch, horner_batch};
 /// Encodes bytes to Base58 string (Bitcoin alphabet, leading zeros as '1's).
 pub use encode::encode;
 /// Decodes Base58 string to bytes (Bitcoin alphabet, no checksum).
@@ -18,6 +16,8 @@ pub use decode::decode;
 pub use decode::decode_full;
 /// Decode errors.
 pub use decode::DecodeError;
+#[cfg(feature = "simd")]
+pub use simd::{divmod_batch, horner_batch};
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -30,11 +30,11 @@ mod tests {
         (b"\x00", "1"),
         (b"\x00\x00", "11"),
         // Simple
-        (b"hello", "n7UKu7Y5"),
+        (b"hello", "Cn8eVZg"),
         // Genesis block hash (32B w/6 leading zeros)
         (
             &hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
-            "19Vqm6P7Q5Ge",
+            "1111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY",
         ),
         // P2PKH address payload (21B: version + hash) → full addr w/checksum
         (

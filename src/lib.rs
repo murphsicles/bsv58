@@ -30,7 +30,6 @@ pub use decode::DecodeError;
 mod tests {
     use super::*;
     use hex_literal::hex;
-    use sha2::{Digest, Sha256};
 
     /// BSV test corpus: Addresses (w/checksum), txids, hashes.
     const CORPUS: &[(&[u8], &str)] = &[

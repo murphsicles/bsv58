@@ -4,9 +4,7 @@
 //! Widths: N=8 (x86 256-bit sim), N=4 (ARM 128-bit sim) – tuned for lane efficiency.
 //! Reciprocal: Magic mul approx for div (fast, ~1% correction via unrolled fixup).
 //! No deps beyond std; runtime detect via `is_*_feature_detected!`.
-
 const BASE: u64 = 58;
-
 /// Unrolled divmod: Array / BASE -> quot, % BASE -> rem (u8).
 /// Uses fixed-point reciprocal mul: (vec * MAGIC >> 32) ≈ vec / 58 (u32-tuned).
 /// Correction: Unrolled per-lane adjust (rare over/under by 1; <2% branches).
@@ -18,31 +16,15 @@ const BASE: u64 = 58;
 #[must_use]
 #[inline]
 pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {
-    const MAGIC: u64 = 0x0DDF_25201u64; // Tuned reciprocal: 2^64 / 58 ≈ 0x0DDF25201
-
     let mut quot = [0u32; N];
     let mut rem = [0u8; N];
-    let mut carry: u32 = 0;
     for lane in 0..N {
-        let val = vec[lane].wrapping_add(carry);
-        let val_u64 = u64::from(val);
-        let wide = val_u64.wrapping_mul(MAGIC);
-        let q = (wide >> 32) as u32;
-        let p = q.wrapping_mul(58u32);
-        let r = u8::try_from(val.wrapping_sub(p)).unwrap(); // safe: %58 <256
-        if u32::from(r) >= 58u32 {
-            rem[lane] = u8::try_from(u32::from(r) - 58u32).unwrap();
-            quot[lane] = q.wrapping_add(1);
-            carry = 0;
-        } else {
-            rem[lane] = r;
-            quot[lane] = q;
-            carry = 0;
-        }
+        let v = vec[lane];
+        quot[lane] = v / 58u32;
+        rem[lane] = (v % 58u32) as u8;
     }
     (quot, rem)
 }
-
 /// Horner for decode: batch sum (acc * BASE + val * `BASEⁱ`) but per-lane.
 /// Actually: `sum_{j=0}^{N-1} val_j * powers[j]` (then * `BASEⁿ` for cascade).
 /// u64 lanes: No overflow (58^8 ~1e14 * 57 < 2^64).
@@ -52,17 +34,13 @@ pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {
 pub fn horner_batch<const N: usize>(vals: [u8; N], powers: &[u64; N]) -> u64 {
     let mut acc: u64 = 0;
     for i in 0..N {
-        acc = acc
-            .wrapping_mul(BASE)
-            .wrapping_add(u64::from(vals[i]).wrapping_mul(powers[i]));
+        acc += u64::from(vals[i]) * powers[i];
     }
     acc
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
     fn test_divmod_exact() {
         // Simple: [0,57,58,116] -> rem [0,57,0,0], quot [0,0,1,2]
@@ -71,7 +49,6 @@ mod tests {
         assert_eq!(q, [0u32, 0, 1, 2]);
         assert_eq!(r, [0u8, 57, 0, 0]);
     }
-
     #[test]
     fn test_divmod_correction() {
         // Case needing +1: 57*58 + 57 = 3364-1? Test edge
@@ -80,12 +57,11 @@ mod tests {
         assert_eq!(q[0], 57);
         assert_eq!(r[0], 53);
     }
-
     #[test]
     fn test_horner() {
         let vals = [1u8, 2, 3, 4];
         let powers = [1u64, 58, 3364, 195112];
         let horner = horner_batch::<4>(vals, &powers);
-        assert_eq!(horner, 1 + 2 * 58 + 3 * 3364 + 4 * 195112); // 782449
+        assert_eq!(horner, 1 + 2 * 58 + 3 * 3364 + 4 * 195112); // 790657
     }
 }

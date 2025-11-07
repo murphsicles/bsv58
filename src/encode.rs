@@ -86,7 +86,7 @@ fn encode_scalar(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
         }
         output.push(VAL_TO_DIGIT[carry as usize]);
         // Trim leading zeros from high end (now front after reverse)
-        while !bytes.is_empty() && *bytes[0] == 0 {
+        while !bytes.is_empty() && bytes[0] == 0 {
             bytes.remove(0);
         }
     }

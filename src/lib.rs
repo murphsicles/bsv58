@@ -8,14 +8,14 @@ pub const ALPHABET: [u8; 58] = *b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmn
 mod decode;
 mod encode;
 mod simd;
-/// Encodes bytes to Base58 string (Bitcoin alphabet, leading zeros as '1's).
-pub use encode::encode;
+/// Decode errors.
+pub use decode::DecodeError;
 /// Decodes Base58 string to bytes (Bitcoin alphabet, no checksum).
 pub use decode::decode;
 /// Decodes with optional BSV checksum validation (strips on success).
 pub use decode::decode_full;
-/// Decode errors.
-pub use decode::DecodeError;
+/// Encodes bytes to Base58 string (Bitcoin alphabet, leading zeros as '1's).
+pub use encode::encode;
 #[cfg(feature = "simd")]
 pub use simd::{divmod_batch, horner_batch};
 #[cfg(test)]

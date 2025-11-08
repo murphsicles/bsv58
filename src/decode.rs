@@ -108,7 +108,6 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<()
 /// ~4x faster; table lookup scalar (scatter unstable), fused mul-add Horner <2c/digit.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<(), DecodeError> {
-    use std::arch::x86_64::{__m256i, _mm256_loadu_si256, _mm256_storeu_si256};
     const N: usize = 8;
     const POWERS: [u64; N] = [
         2_199_023_255_552, // 58^7

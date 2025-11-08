@@ -8,16 +8,16 @@ pub const ALPHABET: [u8; 58] = *b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmn
 mod decode;
 mod encode;
 mod simd;
-/// Decode errors.
-pub use decode::DecodeError;
+#[cfg(feature = "simd")]
+pub use simd::{divmod_batch, horner_batch};
+/// Encodes bytes to Base58 string (Bitcoin alphabet, leading zeros as '1's).
+pub use encode::encode;
 /// Decodes Base58 string to bytes (Bitcoin alphabet, no checksum).
 pub use decode::decode;
 /// Decodes with optional BSV checksum validation (strips on success).
 pub use decode::decode_full;
-/// Encodes bytes to Base58 string (Bitcoin alphabet, leading zeros as '1's).
-pub use encode::encode;
-#[cfg(feature = "simd")]
-pub use simd::{divmod_batch, horner_batch};
+/// Decode errors.
+pub use decode::DecodeError;
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -31,10 +31,10 @@ mod tests {
         (b"\x00\x00", "11"),
         // Simple
         (b"hello", "Cn8eVZg"),
-        // Genesis block hash (32B w/6 leading zeros)
+        // Genesis block hash (32B w/5 leading zeros)
         (
             &hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
-            "1111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY",
+            "111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY",
         ),
         // P2PKH address payload (21B: version + hash) → full addr w/checksum
         (
@@ -77,7 +77,7 @@ mod tests {
         // Invalid char
         assert!(matches!(
             decode("invalid!"),
-            Err(DecodeError::InvalidChar(7))
+            Err(DecodeError::InvalidChar(4))
         ));
         // Checksum mismatch (flip last char)
         let invalid_addr = "1BitcoinEaterAddressDontSendf59kuF";

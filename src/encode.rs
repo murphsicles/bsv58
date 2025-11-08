@@ -27,7 +27,7 @@ pub fn encode(input: &[u8]) -> String {
     )]
     let cap = ((input.len() as f64 * 1.3652).ceil() as usize).max(1);
     let mut output = Vec::with_capacity(cap);
-    // Count leading zero bytes (map to leading '1' chars)
+    // Count leading zero bytes (map to leading '1's)
     let zeros = input.iter().take_while(|&&b| b == 0).count();
     let non_zero = &input[zeros..];
     let non_zero_len = non_zero.len();
@@ -49,7 +49,7 @@ pub fn encode(input: &[u8]) -> String {
         #[cfg(target_arch = "x86_64")]
         {
             if non_zero_len >= 32 && std::arch::is_x86_feature_detected!("avx2") {
-                encode_simd_x_x86(&mut output, &mut buf);
+                encode_simd_x86(&mut output, &mut buf);
             } else {
                 encode_scalar(&mut output, &mut buf);
             }
@@ -82,26 +82,24 @@ pub fn encode(input: &[u8]) -> String {
 fn encode_scalar(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
     while bytes.iter().any(|&b| b != 0) {
         let mut carry: u32 = 0;
-        // Propagate div from low to high (little-endian)
-        for b in bytes.iter_mut() {
+        // Propagate from high to low (since LE, rev())
+        for b in bytes.iter_mut().rev() {
             let temp = carry * 256 + u32::from(*b);
             *b = (temp / 58) as u8;
             carry = temp % 58;
         }
         output.push(VAL_TO_DIGIT[carry as usize]);
-        // Trim leading (high) zeros from end: O(1) amortized
+        // Trim leading high zeros (at end)
         while !bytes.is_empty() && *bytes.last().unwrap() == 0 {
             bytes.pop();
         }
     }
 }
-/**
- * x86 AVX2 SIMD encode: Batch 8 u32 (32 bytes) via intrinsics (256-bit).
- * ~4x speedup on long payloads; unrolled magic mul ~1c/lane, correction <0.1% branches.
- */
+/// x86 AVX2 SIMD encode: Batch 8 u32 (32 bytes) via intrinsics (256-bit).
+/// ~4x speedup on long payloads; unrolled magic mul ~1c/lane, correction <0.1% branches.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[inline]
-fn encode_simd_x_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
+fn encode_simd_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
     use std::arch::x86_64::{__m256i, _mm256_loadu_si256, _mm256_storeu_si256};
     const LANES: usize = 8; // u32x8 for 32 bytes
     const BYTES_PER_BATCH: usize = 4 * LANES;
@@ -141,7 +139,7 @@ fn encode_simd_x_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
                 carry_sum += u64::from(qv);
             }
             #[allow(clippy::cast_possible_truncation)]
-            let carry_bytes = u32::try_from(carry_sum).unwrap().to_le_bytes();
+            let carry_bytes = (carry_sum as u32).to_le_bytes();
             let copy_len = 4.min(bytes.len() - i);
             bytes[i..i + copy_len].copy_from_slice(&carry_bytes[..copy_len]);
             #[allow(clippy::cast_ptr_alignment)]
@@ -157,10 +155,8 @@ fn encode_simd_x_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
     // Tail scalar
     encode_scalar(output, &mut bytes[i..].to_vec());
 }
-/**
- * ARM NEON SIMD encode: Batch 4 u32 (16 bytes) via intrinsics (128-bit).
- * ~2.5x speedup; unrolled magic mul ~1.5c/lane, correction unrolled (pred >99%).
- */
+/// ARM NEON SIMD encode: Batch 4 u32 (16 bytes) via intrinsics (128-bit).
+/// ~2.5x speedup; unrolled magic mul ~1.5c/lane, correction unrolled (pred >99%).
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
 #[inline]
 fn encode_simd_arm(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
@@ -197,7 +193,7 @@ fn encode_simd_arm(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
                 carry_sum += u64::from(qv);
             }
             #[allow(clippy::cast_possible_truncation)]
-            let carry_bytes = u32::try_from(carry_sum).unwrap().to_le_bytes();
+            let carry_bytes = (carry_sum as u32).to_le_bytes();
             let copy_len = 4.min(bytes.len() - i);
             bytes[i..i + copy_len].copy_from_slice(&carry_bytes[..copy_len]);
             let new_chunk = vld1q_u8(batch.as_ptr());
@@ -229,7 +225,7 @@ mod tests {
             encode(&hex!(
                 "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
             )),
-            "1111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY"
+            "111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY"
         );
     }
     #[test]

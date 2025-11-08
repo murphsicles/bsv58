@@ -152,7 +152,6 @@ fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<
 /// ~3x faster; fused vmul/add, vaddv reduce <1.5c/digit.
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
 fn decode_simd_arm(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<(), DecodeError> {
-    use std::arch::aarch64::{uint8x16_t, vld1q_u8, vst1q_u8};
     const N: usize = 4;
     const POWERS: [u64; N] = [195_112, 3_364, 58, 1];
     let mut i = 0;

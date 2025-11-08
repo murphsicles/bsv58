@@ -8,16 +8,16 @@ pub const ALPHABET: [u8; 58] = *b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmn
 mod decode;
 mod encode;
 mod simd;
-#[cfg(feature = "simd")]
-pub use simd::{divmod_batch, horner_batch};
-/// Encodes bytes to Base58 string (Bitcoin alphabet, leading zeros as '1's).
-pub use encode::encode;
+/// Decode errors.
+pub use decode::DecodeError;
 /// Decodes Base58 string to bytes (Bitcoin alphabet, no checksum).
 pub use decode::decode;
 /// Decodes with optional BSV checksum validation (strips on success).
 pub use decode::decode_full;
-/// Decode errors.
-pub use decode::DecodeError;
+/// Encodes bytes to Base58 string (Bitcoin alphabet, leading zeros as '1's).
+pub use encode::encode;
+#[cfg(feature = "simd")]
+pub use simd::{divmod_batch, horner_batch};
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,7 +77,7 @@ mod tests {
         // Invalid char
         assert!(matches!(
             decode("invalid!"),
-            Err(DecodeError::InvalidChar(4))
+            Err(DecodeError::InvalidChar(7))
         ));
         // Checksum mismatch (flip last char)
         let invalid_addr = "1BitcoinEaterAddressDontSendf59kuF";

@@ -92,7 +92,8 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<()
             return Err(DecodeError::InvalidChar(zeros + j));
         }
         let mut carry: u32 = val as u32;
-        for b in output.iter_mut().rev() {  // Reverse for MSB-first
+        for b in output.iter_mut().rev() {
+            // Reverse for MSB-first
             carry += u32::from(*b) * 58;
             *b = (carry & 0xFF) as u8;
             carry >>= 8;
@@ -232,7 +233,7 @@ mod tests {
         // Invalid char
         assert!(matches!(
             decode("invalid!"),
-            Err(DecodeError::InvalidChar(4))  // 'l' is invalid in Bitcoin alphabet
+            Err(DecodeError::InvalidChar(4)) // 'l' is invalid in Bitcoin alphabet
         ));
     }
     #[test]

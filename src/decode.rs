@@ -190,7 +190,7 @@ fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>
         }
         let payload = &output[..output.len() - 4];
         let hash1 = Sha256::digest(payload);
-        let hash2 = Sha256::digest(&hash1);
+        let hash2 = Sha256::digest(hash1);
         let expected_checksum = &hash2[0..4];
         let actual_checksum = &output[output.len() - 4..];
         if expected_checksum != actual_checksum {

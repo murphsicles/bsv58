@@ -87,7 +87,7 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<()
             return Err(DecodeError::InvalidChar(zeros + j));
         }
         let mut carry: u32 = val as u32;
-        for b in output.iter_mut().rev() {
+        for b in output.iter_mut() {
             carry += u32::from(*b) * 58;
             *b = (carry & 0xFF) as u8;
             carry >>= 8;

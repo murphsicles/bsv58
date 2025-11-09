@@ -1,8 +1,8 @@
 //! Base58 encoding module for bsv58.
-# ! Specialized for Bitcoin SV: Bitcoin alphabet, leading zero handling as '1's.
-# ! Optimizations: Precomp table for val->digit, unsafe zero-copy reverse (~15% faster),
-# ! arch-specific SIMD intrinsics (AVX2/NEON ~4x arith speedup), u64 scalar fallback.
-# ! Perf: <5c/byte on AVX2 (unrolled magic mul div, fused carry sum); branch-free where possible.
+//! Specialized for Bitcoin SV: Bitcoin alphabet, leading zero handling as '1's.
+//! Optimizations: Precomp table for val->digit, unsafe zero-copy reverse (~15% faster),
+//! arch-specific SIMD intrinsics (AVX2/NEON ~4x arith speedup), u64 scalar fallback.
+//! Perf: <5c/byte on AVX2 (unrolled magic mul div, fused carry sum); branch-free where possible.
 
 use std::ptr;
 

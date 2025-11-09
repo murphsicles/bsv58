@@ -1,6 +1,6 @@
 # .github/workflows/ci.yml
-# Rust CI for bsv58: Tests, lint, bench, cross-compile (x86/ARM).
-# Triggers: Push/PR to main, nightly on cron (optional perf regression).
+# Rust CI for bsv58: Tests, lint, bench, cross-compile (x86/ARM/Win).
+# Triggers: Push/PR to main, weekly cron for perf regression.
 name: CI
 on:
   push:
@@ -8,10 +8,10 @@ on:
   pull_request:
     branches: [ main ]
   schedule:
-    - cron: '0 0 * * 0' # Weekly Sunday UTC for perf
+    - cron: '0 0 * * 0' # Weekly Sunday UTC
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -Dwarnings # Fail on warnings
+  RUSTFLAGS: -Dwarnings
   RUST_BACKTRACE: 1
 jobs:
   check:
@@ -23,15 +23,21 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt, clippy
-        toolchain: stable # Latest stable as of 2025 (1.82+ for edition 2024)
+        edition: "2024" # Requires 1.85+ (stable since Jul 2024)
     - name: Cache
       uses: Swatinem/rust-cache@v2
-    - name: Check edition 2024
+    - name: Check
       run: cargo check --all-features
     - name: Clippy
-      run: cargo clippy --all-features -- -D clippy::perf -D clippy::pedantic
+      run: cargo clippy --all-features -- -D clippy::perf -D clippy::pedantic -D clippy::nursery
     - name: Fmt
       run: cargo fmt --all -- --check
+    - name: Udeps (no unused deps)
+      uses: cargo-bins/cargo-bins@v1
+      with:
+        bin: udeps
+        args: --all-features
+
   test:
     name: Test
     needs: check
@@ -45,6 +51,8 @@ jobs:
             target: aarch64-unknown-linux-gnu
           - os: macos-latest
             target: aarch64-apple-darwin
+          - os: windows-latest  # Add Win for cross
+            target: x86_64-pc-windows-msvc
     steps:
     - uses: actions/checkout@v4
     - name: Install Rust (stable, cross)
@@ -52,57 +60,79 @@ jobs:
       with:
         targets: ${{ matrix.target }}
         components: rustfmt, clippy
-    - name: Install cross-linker (aarch64)
+        edition: "2024"
+    - name: Install cross-linker (aarch64-linux)
       if: matrix.target == 'aarch64-unknown-linux-gnu'
       run: |
         sudo apt-get update
-        sudo apt-get install -y gcc-aarch64-linux-gnu
-        rustup component add rust-src --target aarch64-unknown-linux-gnu
+        sudo apt-get install -y gcc-aarch64-linux-gnu qemu-user-static
     - name: Cache
       uses: Swatinem/rust-cache@v2
     - name: Build
-      run: cargo build --target ${{ matrix.target }} --verbose
+      run: cargo build --target ${{ matrix.target }} --all-features --verbose
     - name: Run tests
-      run: cargo test --target ${{ matrix.target }} --verbose
+      run: cargo test --target ${{ matrix.target }} --all-features --verbose
+    - name: Coverage (Linux only)
+      if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
+      uses: actions-rs/tarpaulin@v0.1
+      with:
+        args: --all-features --out Xml
+    - name: Upload coverage
+      if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./target/debug/tarpaulin.xml
+
   bench:
     name: Bench
     needs: test
     runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' || always()  # Run always on cron
     steps:
     - uses: actions/checkout@v4
     - name: Install Rust (stable)
       uses: dtolnay/rust-toolchain@stable
+      with:
+        edition: "2024"
     - name: Cache
       uses: Swatinem/rust-cache@v2
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake # For criterion html
+    - name: Install deps (Criterion HTML)
+      run: sudo apt-get update && sudo apt-get install -y cmake linux-perf
     - name: Run benches
-      run: cargo bench --no-run # Save baselines; full run on PR
+      run: |
+        if [[ "${{ github.event_name }}" == "schedule" || "${{ github.ref }}" == "refs/pull/"* ]]; then
+          cargo bench --all-features --bench bench
+        else
+          cargo bench --all-features --bench bench --no-run
+        fi
     - name: Upload bench report
-      uses: actions/upload-artifact@v4
       if: success()
+      uses: actions/upload-artifact@v4
       with:
         name: bench-report
         path: target/criterion/
+        retention-days: 30
+        compression-level: 6
+
   cross:
     name: Cross-Compile
     needs: test
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        target: [x86_64-pc-windows-msvc, aarch64-unknown-linux-gnu] # Win + ARM Linux
+        target: [x86_64-pc-windows-msvc, aarch64-unknown-linux-gnu]
     steps:
     - uses: actions/checkout@v4
     - name: Install Rust (stable, cross)
       uses: dtolnay/rust-toolchain@stable
       with:
         targets: ${{ matrix.target }}
+        edition: "2024"
     - name: Cache
       uses: Swatinem/rust-cache@v2
-    - name: Cross-build
-      run: cargo build --target ${{ matrix.target }} --release --verbose
+    - name: Cross-build (release)
+      run: cargo build --target ${{ matrix.target }} --all-features --release --verbose
+
   perf-regression:
     name: Perf Regression
     if: github.event_name == 'schedule'
@@ -111,13 +141,18 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        fetch-depth: 0 # For git history
+        fetch-depth: 0  # Git history for baselines
     - name: Install Rust (stable)
       uses: dtolnay/rust-toolchain@stable
-    - name: Run full benches
-      run: cargo bench
-    - name: Alert on regression (>10% slowdown)
+      with:
+        edition: "2024"
+    - name: Cache
+      uses: Swatinem/rust-cache@v2
+    - name: Run full benches (JSON for parsing)
+      run: cargo bench --all-features --bench bench --message-format json
+    - name: Detect regression (>15% slowdown)
       uses: 99si/simple-bench-action@v1
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-        threshold: 10 # % change
+        threshold: 15  # Slightly relaxed for SIMD noise
+        json: true

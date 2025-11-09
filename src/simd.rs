@@ -4,7 +4,9 @@
 //! Widths: N=8 (x86 256-bit sim), N=4 (ARM 128-bit sim) – tuned for lane efficiency.
 //! Reciprocal: Magic mul approx for div (fast, ~1% correction via unrolled fixup).
 //! No deps beyond std; runtime detect via `is_*_feature_detected!`.
+
 /// Unrolled divmod: Array / BASE -> quot, % BASE -> rem (u8).
+///
 /// Uses fixed-point reciprocal mul: (vec * MAGIC >> 32) ≈ vec / 58 (u32-tuned).
 /// Correction: Unrolled per-lane adjust (rare over/under by 1; <2% branches).
 /// Fixed N: Compile-time lanes (e.g., 4/8); u32 for arith.
@@ -24,7 +26,9 @@ pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {
     }
     (quot, rem)
 }
+
 /// Horner for decode: batch sum (acc * BASE + val * `BASEⁱ`) but per-lane.
+///
 /// Actually: `sum_{j=0}^{N-1} val_j * powers[j]` (then * `BASEⁿ` for cascade).
 /// u64 lanes: No overflow (58^8 ~1e14 * 57 < 2^64).
 /// Fixed N: Small loop (N=4/8) unrolls fully.
@@ -37,6 +41,7 @@ pub fn horner_batch<const N: usize>(vals: [u8; N], powers: &[u64; N]) -> u64 {
     }
     acc
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

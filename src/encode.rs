@@ -211,13 +211,18 @@ mod tests {
         assert_eq!(encode(b""), "");
         assert_eq!(encode(b"hello"), "Cn8eVZg");
         let txid = hex!("a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0");
-        assert_eq!(encode(&txid), "BtCjvJYNhqehX2sbzvBNrbkCYp2qfc6AepXfK1JGnELw");
+        assert_eq!(
+            encode(&txid),
+            "BtCjvJYNhqehX2sbzvBNrbkCYp2qfc6AepXfK1JGnELw"
+        );
     }
     #[test]
     fn encode_with_zeros() {
         assert_eq!(encode(&hex!("00")), "1");
         assert_eq!(
-            encode(&hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f")),
+            encode(&hex!(
+                "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
+            )),
             "111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY"
         );
     }

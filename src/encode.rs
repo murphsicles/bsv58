@@ -89,7 +89,7 @@ fn encode_scalar(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
         let mut carry: u32 = 0;
         // Fix: Prop from low to high (no .rev(); LE buf, LSB at 0)
         for byte in bytes.iter_mut().take(num_bytes) {
-            let temp = carry * 256 + u32::from(*byte);
+            let temp = u32::from(*byte) + carry * 256u32;
             *byte = (temp / 58) as u8;
             carry = temp % 58;
         }

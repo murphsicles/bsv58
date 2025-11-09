@@ -91,12 +91,20 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<()
 }
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[allow(dead_code)]
-fn decode_simd_x86(_output: &mut Vec<u8>, _digits: &[u8], _zeros: usize) -> Result<(), DecodeError> {
+fn decode_simd_x86(
+    _output: &mut Vec<u8>,
+    _digits: &[u8],
+    _zeros: usize,
+) -> Result<(), DecodeError> {
     unimplemented!("AVX2 batch TODO");
 }
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
 #[allow(dead_code)]
-fn decode_simd_arm(_output: &mut Vec<u8>, _digits: &[u8], _zeros: usize) -> Result<(), DecodeError> {
+fn decode_simd_arm(
+    _output: &mut Vec<u8>,
+    _digits: &[u8],
+    _zeros: usize,
+) -> Result<(), DecodeError> {
     unimplemented!("NEON batch TODO");
 }
 fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {

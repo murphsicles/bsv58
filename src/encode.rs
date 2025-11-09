@@ -3,7 +3,6 @@
 //! Optimizations: Precomp table for val->digit, unsafe zero-copy reverse (~15% faster),
 //! arch-specific SIMD intrinsics (AVX2/NEON ~4x arith speedup), u64 scalar fallback.
 //! Perf: <5c/byte on AVX2 (unrolled magic mul div, fused carry sum); branch-free where possible.
-
 const VAL_TO_DIGIT: [u8; 58] = [
     b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', // 0-8
     b'A', b'B', b'C', b'D', b'E', b'F', b'G', b'H', // 9-16
@@ -13,7 +12,6 @@ const VAL_TO_DIGIT: [u8; 58] = [
     b'i', b'j', b'k', b'm', b'n', b'o', b'p', b'q', // 41-48
     b'r', b's', b't', b'u', b'v', b'w', b'x', b'y', b'z', // 49-57
 ];
-
 #[must_use]
 #[inline]
 pub fn encode(input: &[u8]) -> String {
@@ -38,12 +36,13 @@ pub fn encode(input: &[u8]) -> String {
     }
     // Copy non_zero to buf (BE, no reverse for low-first process)
     let mut buf = non_zero.to_vec();
+    buf.reverse(); // LSB-first for scalar propagation
     // Dispatch SIMD or scalar
     #[cfg(feature = "simd")]
     {
         #[cfg(target_arch = "x86_64")]
         {
-            if non_zero_len >= 32 && std::arch::is_x86_feature_detected!("avx2") {
+            if non_zero_len >= 64 && std::arch::is_x86_feature_detected!("avx2") {
                 encode_simd_x86(&mut output, &mut buf);
             } else {
                 encode_scalar(&mut output, &mut buf);
@@ -51,7 +50,7 @@ pub fn encode(input: &[u8]) -> String {
         }
         #[cfg(target_arch = "aarch64")]
         {
-            if non_zero_len >= 16 && std::arch::is_aarch64_feature_detected!("neon") {
+            if non_zero_len >= 64 && std::arch::is_aarch64_feature_detected!("neon") {
                 encode_simd_arm(&mut output, &mut buf);
             } else {
                 encode_scalar(&mut output, &mut buf);
@@ -69,7 +68,6 @@ pub fn encode(input: &[u8]) -> String {
     // To String: Unchecked UTF-8 (all chars ASCII 0x21-0x7A, valid)
     unsafe { String::from_utf8_unchecked(output) }
 }
-
 /// Scalar fallback: Byte-by-byte carry propagation (u64 handles ~8 bytes before /58).
 /// For short inputs (<16 bytes) or no SIMD. Optimizer unrolls ~4-8 iters naturally.
 /// Enhanced: Wrapping ops for safety on large inputs.
@@ -93,7 +91,6 @@ fn encode_scalar(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
         bytes.truncate(num_bytes);
     }
 }
-
 /// x86 AVX2 SIMD encode: Batch 8 u32 (32 bytes) via intrinsics (256-bit).
 /// ~4x speedup on long payloads; unrolled magic mul ~1c/lane, correction <0.1% branches.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
@@ -155,7 +152,6 @@ fn encode_simd_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
     // Tail scalar
     encode_scalar(output, &mut bytes[i..].to_vec());
 }
-
 /// ARM NEON SIMD encode: Batch 4 u32 (16 bytes) via intrinsics (128-bit).
 /// ~2.5x speedup; unrolled magic mul ~1.5c/lane, correction unrolled (pred >99%).
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
@@ -206,12 +202,10 @@ fn encode_simd_arm(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
     // Tail scalar
     encode_scalar(output, &mut bytes[i..].to_vec());
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use hex_literal::hex;
-
     #[test]
     fn encode_known_no_zeros() {
         assert_eq!(encode(b""), "");
@@ -219,7 +213,6 @@ mod tests {
         let txid = hex!("a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0");
         assert_eq!(encode(&txid), "BtCjvJYNhqehX2sbzvBNrbkCYp2qfc6AepXfK1JGnELw");
     }
-
     #[test]
     fn encode_with_zeros() {
         assert_eq!(encode(&hex!("00")), "1");
@@ -228,14 +221,12 @@ mod tests {
             "111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY"
         );
     }
-
     #[test]
     fn encode_large() {
         let large = vec![0u8; 50];
         let encoded = encode(&large);
         assert_eq!(encoded, "1".repeat(50));
     }
-
     #[test]
     fn simd_dispatch() {
         let _ = encode(b"hello");

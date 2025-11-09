@@ -216,4 +216,28 @@ mod tests {
     fn encode_known_no_zeros() {
         assert_eq!(encode(b""), "");
         assert_eq!(encode(b"hello"), "Cn8eVZg");
-        let txid = hex!("a1b2c3d4e5f67890123456789abcdef012345678
+        let txid = hex!("a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0");
+        assert_eq!(encode(&txid), "BtCjvJYNhqehX2sbzvBNrbkCYp2qfc6AepXfK1JGnELw");
+    }
+
+    #[test]
+    fn encode_with_zeros() {
+        assert_eq!(encode(&hex!("00")), "1");
+        assert_eq!(
+            encode(&hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f")),
+            "111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY"
+        );
+    }
+
+    #[test]
+    fn encode_large() {
+        let large = vec![0u8; 50];
+        let encoded = encode(&large);
+        assert_eq!(encoded, "1".repeat(50));
+    }
+
+    #[test]
+    fn simd_dispatch() {
+        let _ = encode(b"hello");
+    }
+}

@@ -9,8 +9,7 @@ use base58;
 use bs58;
 use bsv58::{decode, decode_full, encode};
 use criterion::{
-    black_box, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main,
-    measurement::WallTime,
+    black_box, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main, measurement::WallTime,
 };
 use hex_literal::hex;
 use std::hint::black_box;
@@ -75,7 +74,7 @@ fn bench_encode(c: &mut Criterion) {
 /// Bench decode raw (no checksum): Per-size groups, input chars.
 fn bench_decode(c: &mut Criterion) {
     for (_, encoded) in bsv_samples() {
-        let size = encoded.len();  // ASCII chars ≈ bytes
+        let size = encoded.len(); // ASCII chars ≈ bytes
         let mut group = c.benchmark_group(format!("decode/{}chars", size));
         group
             .sample_size(200)
@@ -103,7 +102,7 @@ fn bench_decode_checksum(c: &mut Criterion) {
         let size = addr.len();
         let mut group = c.benchmark_group(format!("decode_checksum/{}chars", size));
         group
-            .sample_size(100)  // Fewer: sha2 noisy
+            .sample_size(100) // Fewer: sha2 noisy
             .measurement_time(WallTime)
             .throughput(Throughput::Bytes(size as u64));
 
@@ -131,7 +130,7 @@ fn bench_roundtrip(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("bsv58", size), |b| {
             b.iter(|| {
                 let enc = encode(input);
-                let _ = decode(&enc).unwrap();  // Drop for perf
+                let _ = decode(&enc).unwrap(); // Drop for perf
             })
         });
         group.bench_function(BenchmarkId::new("base58", size), |b| {

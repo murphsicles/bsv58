@@ -5,15 +5,15 @@
 //! Outputs: GB/s (higher better); HTML in target/criterion.
 //! Projections (i9-13900K/M3 Max): bsv58 encode/decode ~6 GB/s (5x bs58 ~1.2 GB/s).
 
-use base58;
+use base58::{FromBase58, ToBase58};
 use bs58;
 use bsv58::{decode, decode_full, encode};
 use criterion::{
-    BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main,
-    measurement::WallTime,
+    BenchmarkId, Criterion, Throughput, criterion_group, criterion_main, measurement::WallTime,
 };
 use hex_literal::hex;
 use std::hint::black_box;
+use std::time::Duration;
 
 /// Raw BSV samples: (bytes for encode, raw_encoded for decode/roundtrip).
 /// Sizes: 5B (hello), 21B (addr payload), 32B (txid), 32B (genesis w/zeros).
@@ -54,7 +54,7 @@ fn bench_encode(c: &mut Criterion) {
         let mut group = c.benchmark_group(format!("encode/{}B", size));
         group
             .sample_size(200)
-            .measurement_time(WallTime)
+            .measurement_time(Duration::from_secs(1))
             .throughput(Throughput::Bytes(size as u64));
 
         let input = black_box(bytes);
@@ -79,7 +79,7 @@ fn bench_decode(c: &mut Criterion) {
         let mut group = c.benchmark_group(format!("decode/{}chars", size));
         group
             .sample_size(200)
-            .measurement_time(WallTime)
+            .measurement_time(Duration::from_secs(1))
             .throughput(Throughput::Bytes(size as u64));
 
         let s = black_box(encoded);
@@ -104,7 +104,7 @@ fn bench_decode_checksum(c: &mut Criterion) {
         let mut group = c.benchmark_group(format!("decode_checksum/{}chars", size));
         group
             .sample_size(100) // Fewer: sha2 noisy
-            .measurement_time(WallTime)
+            .measurement_time(Duration::from_secs(1))
             .throughput(Throughput::Bytes(size as u64));
 
         let s = black_box(addr);
@@ -124,7 +124,7 @@ fn bench_roundtrip(c: &mut Criterion) {
         let mut group = c.benchmark_group(format!("roundtrip/{}B", size));
         group
             .sample_size(200)
-            .measurement_time(WallTime)
+            .measurement_time(Duration::from_secs(1))
             .throughput(Throughput::Bytes(size as u64));
 
         let input = black_box(bytes);

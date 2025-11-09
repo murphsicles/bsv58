@@ -9,7 +9,13 @@ use base58;
 use bs58;
 use bsv58::{decode, decode_full, encode};
 use criterion::{
-    black_box, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main, measurement::WallTime,
+    BenchmarkId,
+    Criterion,
+    Throughput,
+    black_box,
+    criterion_group,
+    criterion_main,
+    measurement::WallTime,
 };
 use hex_literal::hex;
 use std::hint::black_box;

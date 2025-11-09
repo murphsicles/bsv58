@@ -33,10 +33,10 @@ jobs:
     - name: Fmt
       run: cargo fmt --all -- --check
     - name: Udeps (no unused deps)
-      uses: cargo-bins/cargo-bins@v1
+      uses: aig787/cargo-udeps-action@v1
       with:
-        bin: udeps
-        args: --all-features
+        version: 'latest'
+        args: --all-features --all-targets
 
   test:
     name: Test

@@ -1,10 +1,12 @@
 //! Base58 decoding module for bsv58.
-//! Specialized for Bitcoin SV: Bitcoin alphabet, optional double-SHA256 checksum validation.
-//! Optimizations: Precomp table for char->val, arch-specific SIMD intrinsics (AVX2/NEON ~4x faster),
+# ! BSV-only: Bitcoin alphabet, optional double-SHA256 checksum validation.
+# ! Optimizations: Precomp table for char->val, arch-specific SIMD intrinsics (AVX2/NEON ~4x faster),
 //! scalar u64 fallback. Runtime dispatch for x86/ARM.
 //! Perf: <4c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
+
 use crate::ALPHABET;
 use sha2::{Digest, Sha256};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
     /// Invalid character at position.
@@ -14,6 +16,7 @@ pub enum DecodeError {
     /// Payload too short for checksum (needs >=4 bytes).
     InvalidLength,
 }
+
 /// Decodes a Base58 string (Bitcoin alphabet) to bytes (no checksum).
 ///
 /// # Errors
@@ -22,6 +25,7 @@ pub enum DecodeError {
 pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
     decode_full(input, false)
 }
+
 /// Decodes a `Base58Check` string (Bitcoin alphabet) to bytes, optionally validating checksum.
 /// Validates BSV-style checksum if `validate_checksum=true` (default false for raw payloads).
 ///
@@ -52,122 +56,48 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
         output.extend(std::iter::repeat_n(0u8, zeros));
         return finish_decode(output, validate_checksum);
     }
-    #[cfg(feature = "simd")]
-    {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if digits.len() >= 32 && std::arch::is_x86_feature_detected!("avx2") {
-                decode_simd_x86(&mut output, digits, zeros)?;
-            } else {
-                decode_scalar(&mut output, digits, zeros)?;
-            }
-        }
-        #[cfg(target_arch = "aarch64")]
-        {
-            if digits.len() >= 16 && std::arch::is_aarch64_feature_detected!("neon") {
-                decode_simd_arm(&mut output, digits, zeros)?;
-            } else {
-                decode_scalar(&mut output, digits, zeros)?;
-            }
-        }
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        decode_scalar(&mut output, digits, zeros)?;
-    }
-    output.reverse();
+    // Scalar only for now; TODO: SIMD batch with high-first carry
+    decode_scalar(&mut output, digits, zeros)?;
+    output.reverse(); // Low-first to BE
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
     finish_decode(output, validate_checksum)
 }
-#[allow(clippy::cast_lossless, clippy::cast_possible_truncation)]
+
 fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<(), DecodeError> {
-    for (j, &ch) in digits.iter().enumerate() {
+    let mut i = 0;
+    for &ch in digits {
         let val = DIGIT_TO_VAL[ch as usize];
         if val == 255 {
-            return Err(DecodeError::InvalidChar(zeros + j));
+            return Err(DecodeError::InvalidChar(zeros + i));
         }
         let mut carry: u32 = val as u32;
-        for b in output.iter_mut() {
-            carry += u32::from(*b) * 58;
-            *b = (carry & 0xFF) as u8;
-            carry >>= 8;
+        let mut j = 0;
+        while carry > 0 || j < output.len() {
+            if j < output.len() {
+                carry += (output[j] as u32) * 58;
+            }
+            output[j] = (carry % 256) as u8;
+            carry /= 256;
+            j += 1;
+            if j == output.len() {
+                output.push(0);
+            }
         }
-        while carry != 0 {
-            output.push((carry & 0xFF) as u8);
-            carry >>= 8;
-        }
+        i += 1;
     }
     Ok(())
 }
+
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
-fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<(), DecodeError> {
-    const N: usize = 8;
-    const POWERS: [u64; N] = [
-        2_199_023_255_552, // 58^7
-        37_931_348_544,    // 58^6
-        654_749_312,       // 58^5
-        11_289_512,        // 58^4
-        194_872,           // 58^3
-        3_364,             // 58^2
-        58,                // 58^1
-        1,                 // 58^0
-    ];
-    let mut i = 0;
-    while i + N <= digits.len() {
-        let mut vals = [0u8; N];
-        for j in 0..N {
-            let ch = digits[i + j];
-            let val = DIGIT_TO_VAL[ch as usize];
-            if val == 255 {
-                return Err(DecodeError::InvalidChar(zeros + i + j));
-            }
-            vals[j] = val;
-        }
-        let horner = crate::simd::horner_batch::<N>(vals, &POWERS);
-        let mut carry: u64 = horner;
-        for b in output.iter_mut().rev() {
-            carry += u64::from(*b) * 58;
-            *b = (carry & 0xFF) as u8;
-            carry >>= 8;
-        }
-        while carry != 0 {
-            output.push((carry & 0xFF) as u8);
-            carry >>= 8;
-        }
-        i += N;
-    }
-    decode_scalar(output, &digits[i..], zeros + i)
+fn decode_simd_x86(_output: &mut Vec<u8>, _digits: &[u8], _zeros: usize) -> Result<(), DecodeError> {
+    unimplemented!("AVX2 batch TODO");
 }
+
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
-fn decode_simd_arm(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<(), DecodeError> {
-    const N: usize = 4;
-    const POWERS: [u64; N] = [195_112, 3_364, 58, 1];
-    let mut i = 0;
-    while i + N <= digits.len() {
-        let mut vals = [0u8; N];
-        for j in 0..N {
-            let ch = digits[i + j];
-            let val = DIGIT_TO_VAL[ch as usize];
-            if val == 255 {
-                return Err(DecodeError::InvalidChar(zeros + i + j));
-            }
-            vals[j] = val;
-        }
-        let horner = crate::simd::horner_batch::<N>(vals, &POWERS);
-        let mut carry: u64 = horner;
-        for b in output.iter_mut().rev() {
-            carry += u64::from(*b) * 58;
-            *b = (carry & 0xFF) as u8;
-            carry >>= 8;
-        }
-        while carry != 0 {
-            output.push((carry & 0xFF) as u8);
-            carry >>= 8;
-        }
-        i += N;
-    }
-    decode_scalar(output, &digits[i..], zeros + i)
+fn decode_simd_arm(_output: &mut Vec<u8>, _digits: &[u8], _zeros: usize) -> Result<(), DecodeError> {
+    unimplemented!("NEON batch TODO");
 }
+
 fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {
     if validate_checksum {
         if output.len() < 4 {
@@ -185,6 +115,7 @@ fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>
     }
     Ok(output)
 }
+
 const DIGIT_TO_VAL: [u8; 128] = {
     let mut table = [255u8; 128];
     let alphabet = &ALPHABET;
@@ -200,10 +131,12 @@ const DIGIT_TO_VAL: [u8; 128] = {
     }
     table
 };
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use hex_literal::hex;
+
     #[test]
     fn decode_known_no_checksum() {
         assert_eq!(decode(""), Ok(vec![]));
@@ -218,6 +151,7 @@ mod tests {
             Err(DecodeError::InvalidChar(4))
         ));
     }
+
     #[test]
     fn decode_with_checksum() {
         let addr = "1BitcoinEaterAddressDontSendf59kuE";
@@ -229,6 +163,7 @@ mod tests {
             Err(DecodeError::Checksum)
         ));
     }
+
     #[test]
     fn decode_length_error() {
         assert!(matches!(
@@ -236,6 +171,7 @@ mod tests {
             Err(DecodeError::InvalidLength)
         ));
     }
+
     #[test]
     fn simd_dispatch() {
         let _ = decode("Cn8eVZg");

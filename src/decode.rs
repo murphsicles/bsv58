@@ -3,10 +3,8 @@
 //! Optimizations: Precomp table for char->val, arch-specific SIMD intrinsics (AVX2/NEON ~4x faster),
 //! scalar u64 fallback. Runtime dispatch for x86/ARM.
 //! Perf: <4c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
-
 use crate::ALPHABET;
 use sha2::{Digest, Sha256};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
     /// Invalid character at position.
@@ -16,7 +14,6 @@ pub enum DecodeError {
     /// Payload too short for checksum (needs >=4 bytes).
     InvalidLength,
 }
-
 /// Decodes a Base58 string (Bitcoin alphabet) to bytes (no checksum).
 ///
 /// # Errors
@@ -25,7 +22,6 @@ pub enum DecodeError {
 pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
     decode_full(input, false)
 }
-
 /// Decodes a `Base58Check` string (Bitcoin alphabet) to bytes, optionally validating checksum.
 /// Validates BSV-style checksum if `validate_checksum=true` (default false for raw payloads).
 ///
@@ -62,19 +58,26 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
     finish_decode(output, validate_checksum)
 }
-
+/// Scalar fallback: Digit-by-digit Horner accumulation with carry propagation.
+/// Processes high-to-low (MSB first); grows output as needed. No SIMD dispatch here.
+/// Enhanced: Branch-free where possible; u32 for temp arith (fits 58*255 + 255 < 2^16).
+#[allow(
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    clippy::explicit_counter_loop
+)]
+#[inline]
 fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<(), DecodeError> {
-    let mut i = 0;
-    for &ch in digits {
+    for (i, &ch) in digits.iter().enumerate() {
         let val = DIGIT_TO_VAL[ch as usize];
         if val == 255 {
             return Err(DecodeError::InvalidChar(zeros + i));
         }
-        let mut carry: u32 = val as u32;
+        let mut carry: u32 = u32::from(val);
         let mut j = 0;
         while carry > 0 || j < output.len() {
             if j < output.len() {
-                carry += (output[j] as u32) * 58;
+                carry += u32::from(output[j]) * 58;
             }
             output[j] = (carry % 256) as u8;
             carry /= 256;
@@ -83,23 +86,19 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<()
                 output.push(0);
             }
         }
-        i += 1;
     }
     Ok(())
 }
-
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[allow(dead_code)]
 fn decode_simd_x86(_output: &mut Vec<u8>, _digits: &[u8], _zeros: usize) -> Result<(), DecodeError> {
     unimplemented!("AVX2 batch TODO");
 }
-
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
 #[allow(dead_code)]
 fn decode_simd_arm(_output: &mut Vec<u8>, _digits: &[u8], _zeros: usize) -> Result<(), DecodeError> {
     unimplemented!("NEON batch TODO");
 }
-
 fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {
     if validate_checksum {
         if output.len() < 4 {
@@ -117,7 +116,6 @@ fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>
     }
     Ok(output)
 }
-
 const DIGIT_TO_VAL: [u8; 128] = {
     let mut table = [255u8; 128];
     let alphabet = &ALPHABET;
@@ -133,12 +131,10 @@ const DIGIT_TO_VAL: [u8; 128] = {
     }
     table
 };
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use hex_literal::hex;
-
     #[test]
     fn decode_known_no_checksum() {
         assert_eq!(decode(""), Ok(vec![]));
@@ -153,7 +149,6 @@ mod tests {
             Err(DecodeError::InvalidChar(4))
         ));
     }
-
     #[test]
     fn decode_with_checksum() {
         let addr = "1BitcoinEaterAddressDontSendf59kuE";
@@ -165,7 +160,6 @@ mod tests {
             Err(DecodeError::Checksum)
         ));
     }
-
     #[test]
     fn decode_length_error() {
         assert!(matches!(
@@ -173,7 +167,6 @@ mod tests {
             Err(DecodeError::InvalidLength)
         ));
     }
-
     #[test]
     fn simd_dispatch() {
         let _ = decode("Cn8eVZg");

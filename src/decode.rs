@@ -1,6 +1,6 @@
 //! Base58 decoding module for bsv58.
-# ! BSV-only: Bitcoin alphabet, optional double-SHA256 checksum validation.
-# ! Optimizations: Precomp table for char->val, arch-specific SIMD intrinsics (AVX2/NEON ~4x faster),
+//! BSV-only: Bitcoin alphabet, optional double-SHA256 checksum validation.
+//! Optimizations: Precomp table for char->val, arch-specific SIMD intrinsics (AVX2/NEON ~4x faster),
 //! scalar u64 fallback. Runtime dispatch for x86/ARM.
 //! Perf: <4c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
 

@@ -32,6 +32,11 @@ jobs:
       run: cargo clippy --all-features -- -D clippy::perf -D clippy::pedantic -D clippy::nursery
     - name: Fmt
       run: cargo fmt --all -- --check
+    - name: Install nightly (for udeps)
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: clippy  # Minimal; udeps needs it for analysis
+        override: true      # Sets as default temporarily
     - name: Udeps (no unused deps)
       uses: aig787/cargo-udeps-action@v1
       with:

@@ -3,7 +3,9 @@
 //! Optimizations: Precomp table for val->digit, unsafe zero-copy reverse (~15% faster),
 //! arch-specific SIMD intrinsics (AVX2/NEON ~4x arith speedup), u64 scalar fallback.
 //! Perf: <5c/byte on AVX2 (unrolled magic mul div, fused carry sum); branch-free where possible.
+
 use std::ptr;
+
 const VAL_TO_DIGIT: [u8; 58] = [
     b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', // 0-8
     b'A', b'B', b'C', b'D', b'E', b'F', b'G', b'H', // 9-16
@@ -13,6 +15,7 @@ const VAL_TO_DIGIT: [u8; 58] = [
     b'i', b'j', b'k', b'm', b'n', b'o', b'p', b'q', // 41-48
     b'r', b's', b't', b'u', b'v', b'w', b'x', b'y', b'z', // 49-57
 ];
+
 #[must_use]
 #[inline]
 pub fn encode(input: &[u8]) -> String {
@@ -74,27 +77,31 @@ pub fn encode(input: &[u8]) -> String {
     // To String: Unchecked UTF-8 (all chars ASCII 0x21-0x7A, valid)
     unsafe { String::from_utf8_unchecked(output) }
 }
+
 /// Scalar fallback: Byte-by-byte carry propagation (u64 handles ~8 bytes before /58).
 /// For short inputs (<16 bytes) or no SIMD. Optimizer unrolls ~4-8 iters naturally.
 /// Enhanced: Wrapping ops for safety on large inputs.
 #[allow(clippy::cast_possible_truncation)] // safe: temp / 58 <= 255
 #[inline]
 fn encode_scalar(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
-    while bytes.iter().any(|&b| b != 0) {
+    let mut num_bytes = bytes.len();
+    while num_bytes > 0 {
         let mut carry: u32 = 0;
-        // Propagate from high to low (since LE, rev())
-        for b in bytes.iter_mut().rev() {
-            let temp = carry * 256 + u32::from(*b);
-            *b = (temp / 58) as u8;
+        // Fix: Prop from low to high (no .rev(); LE buf, LSB at 0)
+        for i in 0..num_bytes {
+            let temp = carry * 256 + u32::from(bytes[i]);
+            bytes[i] = (temp / 58) as u8;
             carry = temp % 58;
         }
         output.push(VAL_TO_DIGIT[carry as usize]);
-        // Trim leading high zeros (at end)
-        while !bytes.is_empty() && *bytes.last().unwrap() == 0 {
-            bytes.pop();
+        // Trim leading high zeros (MSB at end)
+        while num_bytes > 0 && bytes[num_bytes - 1] == 0 {
+            num_bytes -= 1;
         }
+        bytes.truncate(num_bytes);
     }
 }
+
 /// x86 AVX2 SIMD encode: Batch 8 u32 (32 bytes) via intrinsics (256-bit).
 /// ~4x speedup on long payloads; unrolled magic mul ~1c/lane, correction <0.1% branches.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
@@ -155,6 +162,7 @@ fn encode_simd_x86(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
     // Tail scalar
     encode_scalar(output, &mut bytes[i..].to_vec());
 }
+
 /// ARM NEON SIMD encode: Batch 4 u32 (16 bytes) via intrinsics (128-bit).
 /// ~2.5x speedup; unrolled magic mul ~1.5c/lane, correction unrolled (pred >99%).
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
@@ -204,10 +212,12 @@ fn encode_simd_arm(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
     // Tail scalar
     encode_scalar(output, &mut bytes[i..].to_vec());
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use hex_literal::hex;
+
     #[test]
     fn encode_known_no_zeros() {
         assert_eq!(encode(b""), "");
@@ -218,6 +228,7 @@ mod tests {
             "BtCjvJYNhqehX2sbzvBNrbkCYp2qfc6AepXfK1JGnELw"
         );
     }
+
     #[test]
     fn encode_with_zeros() {
         assert_eq!(encode(&hex!("00")), "1");
@@ -228,12 +239,14 @@ mod tests {
             "111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY"
         );
     }
+
     #[test]
     fn encode_large() {
         let large = vec![0u8; 50];
         let encoded = encode(&large);
-        assert_eq!(encoded, "1".repeat(68));
+        assert_eq!(encoded, "1".repeat(50));
     }
+
     #[test]
     fn simd_dispatch() {
         let _ = encode(b"hello");

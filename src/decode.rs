@@ -122,19 +122,24 @@ fn decode_scalar(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
 /// ~3.5x scalar.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[target_feature(enable = "avx2")]
+#[allow(unsafe_op_in_unsafe_fn)]
 unsafe fn decode_simd_x86(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
     const LANES: usize = 8;
     let mut i = 0;
     let mut carry = 0u64;
     while i + LANES <= vals.len() {
         let ptr = vals.as_ptr().add(i);
-        let batch = _mm_loadu_si128(ptr as *const __m128i); // Load u8x16, but for 8 use low
+        let _batch = _mm_loadu_si128(ptr as *const __m128i); // Load u8x16, but for 8 use low
         let mut accs = [0u64; LANES];
         // Unrolled Horner per lane
-        for lane in 0..LANES {
-            let val = u64::from(*ptr.add(lane));
-            accs[lane] = accs[lane] * 58 + val;
-        }
+        accs[0] = accs[0] * 58 + u64::from(*ptr.add(0));
+        accs[1] = accs[1] * 58 + u64::from(*ptr.add(1));
+        accs[2] = accs[2] * 58 + u64::from(*ptr.add(2));
+        accs[3] = accs[3] * 58 + u64::from(*ptr.add(3));
+        accs[4] = accs[4] * 58 + u64::from(*ptr.add(4));
+        accs[5] = accs[5] * 58 + u64::from(*ptr.add(5));
+        accs[6] = accs[6] * 58 + u64::from(*ptr.add(6));
+        accs[7] = accs[7] * 58 + u64::from(*ptr.add(7));
         // Extract bytes + carry (unrolled)
         for &acc in &accs {
             let low = acc + carry;
@@ -172,19 +177,20 @@ unsafe fn decode_simd_x86(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
 /// ~3x scalar.
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
 #[target_feature(enable = "neon")]
+#[allow(unsafe_op_in_unsafe_fn)]
 unsafe fn decode_simd_arm(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
     const LANES: usize = 4;
     let mut i = 0;
     let mut carry = 0u64;
     while i + LANES <= vals.len() {
         let ptr = vals.as_ptr().add(i);
-        let batch = vld1_u8(ptr as *const u8); // u8x16, low 4
+        let _batch = vld1_u8(ptr as *const u8); // u8x16, low 4
         let mut accs = [0u64; LANES];
         // Unrolled
-        for lane in 0..LANES {
-            let val = u64::from(vget_lane_u8(batch, lane as i32));
-            accs[lane] = accs[lane] * 58 + val;
-        }
+        accs[0] = accs[0] * 58 + u64::from(vget_lane_u8(_batch, 0));
+        accs[1] = accs[1] * 58 + u64::from(vget_lane_u8(_batch, 1));
+        accs[2] = accs[2] * 58 + u64::from(vget_lane_u8(_batch, 2));
+        accs[3] = accs[3] * 58 + u64::from(vget_lane_u8(_batch, 3));
         // Extract (unrolled)
         for &acc in &accs {
             let low = acc + carry;

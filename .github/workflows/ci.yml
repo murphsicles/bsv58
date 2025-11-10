@@ -61,25 +61,23 @@ jobs:
         targets: ${{ matrix.target }}
         components: rustfmt, clippy
         edition: "2024"
-    - name: Install cross-linker (aarch64-linux)
+    - name: Install cross (for aarch64-linux)
       if: matrix.target == 'aarch64-unknown-linux-gnu'
-      run: |
-        sudo dpkg --add-architecture arm64
-        sudo apt-get update
-        sudo apt-get install -y gcc-aarch64-linux-gnu libc6-dev-arm64-cross qemu-user-static binfmt-support libc6:arm64
-        sudo update-binfmts --enable qemu-aarch64
-    - name: Configure cross-compilation
-      if: matrix.target == 'aarch64-unknown-linux-gnu'
-      run: |
-        mkdir -p .cargo
-        echo '[target.aarch64-unknown-linux-gnu]' >> .cargo/config.toml
-        echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
+      run: cargo install cross --git https://github.com/cross-rs/cross
     - name: Cache
       uses: Swatinem/rust-cache@v2
     - name: Build
+      if: matrix.target != 'aarch64-unknown-linux-gnu'
       run: cargo build --target ${{ matrix.target }} --all-features --verbose
+    - name: Build (cross)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: cross build --target ${{ matrix.target }} --all-features --verbose
     - name: Run tests
+      if: matrix.target != 'aarch64-unknown-linux-gnu'
       run: cargo test --target ${{ matrix.target }} --all-features --verbose
+    - name: Run tests (cross)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: cross test --target ${{ matrix.target }} --all-features --verbose
     - name: Install tarpaulin (Linux only)
       if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
       run: cargo install cargo-tarpaulin --version 0.34.1 --locked
@@ -135,9 +133,16 @@ jobs:
       with:
         targets: ${{ matrix.target }}
         edition: "2024"
+    - name: Install cross (for aarch64-linux)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: cargo install cross --git https://github.com/cross-rs/cross
     - name: Cache
       uses: Swatinem/rust-cache@v2
     - name: Cross-build (release)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: cross build --target ${{ matrix.target }} --all-features --release --verbose
+    - name: Cross-build (release)
+      if: matrix.target == 'x86_64-pc-windows-msvc'
       run: cargo build --target ${{ matrix.target }} --all-features --release --verbose
   perf-regression:
     name: Perf Regression

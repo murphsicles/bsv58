@@ -8,9 +8,9 @@ use crate::ALPHABET;
 use sha2::{Digest, Sha256};
 
 #[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::*;
+use std::arch::x86_64::_mm_loadu_si128;
 #[cfg(target_arch = "aarch64")]
-use std::arch::aarch64::*;
+use std::arch::aarch64::{vget_lane_u8, vld1_u8};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
@@ -105,12 +105,14 @@ fn decode_scalar(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
         acc = acc * 58 + u64::from(val);
         // Extract low byte if full
         if acc >= 256 {
+            #[allow(clippy::cast_possible_truncation)]
             output.push((acc % 256) as u8);
             acc /= 256;
         }
     }
     // Final extract
     while acc > 0 {
+        #[allow(clippy::cast_possible_truncation)]
         output.push((acc % 256) as u8);
         acc /= 256;
     }
@@ -122,14 +124,14 @@ fn decode_scalar(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
 /// ~3.5x scalar.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn)]
+#[allow(unsafe_op_in_unsafe_fn, clippy::cast_ptr_alignment, clippy::ptr_as_ptr, clippy::cast_possible_truncation)]
 unsafe fn decode_simd_x86(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
     const LANES: usize = 8;
     let mut i = 0;
     let mut carry = 0u64;
     while i + LANES <= vals.len() {
         let ptr = vals.as_ptr().add(i);
-        let _batch = _mm_loadu_si128(ptr as *const __m128i); // Load u8x16, but for 8 use low
+        let _batch = _mm_loadu_si128(ptr.cast::<_>());
         let mut accs = [0u64; LANES];
         // Unrolled Horner per lane
         accs[0] = accs[0] * 58 + u64::from(*ptr.add(0));
@@ -160,11 +162,13 @@ unsafe fn decode_simd_x86(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
         for &val in tail {
             tail_acc = tail_acc * 58 + u64::from(val);
             if tail_acc >= 256 {
+                #[allow(clippy::cast_possible_truncation)]
                 output.push((tail_acc % 256) as u8);
                 tail_acc /= 256;
             }
         }
         while tail_acc > 0 {
+            #[allow(clippy::cast_possible_truncation)]
             output.push((tail_acc % 256) as u8);
             tail_acc /= 256;
         }
@@ -177,14 +181,14 @@ unsafe fn decode_simd_x86(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
 /// ~3x scalar.
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
 #[target_feature(enable = "neon")]
-#[allow(unsafe_op_in_unsafe_fn)]
+#[allow(unsafe_op_in_unsafe_fn, clippy::cast_ptr_alignment, clippy::ptr_as_ptr, clippy::cast_possible_truncation)]
 unsafe fn decode_simd_arm(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
     const LANES: usize = 4;
     let mut i = 0;
     let mut carry = 0u64;
     while i + LANES <= vals.len() {
         let ptr = vals.as_ptr().add(i);
-        let _batch = vld1_u8(ptr as *const u8); // u8x16, low 4
+        let _batch = vld1_u8(ptr.cast::<_>()); // u8x16, low 4
         let mut accs = [0u64; LANES];
         // Unrolled
         accs[0] = accs[0] * 58 + u64::from(vget_lane_u8(_batch, 0));
@@ -211,11 +215,13 @@ unsafe fn decode_simd_arm(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
         for &val in tail {
             tail_acc = tail_acc * 58 + u64::from(val);
             if tail_acc >= 256 {
+                #[allow(clippy::cast_possible_truncation)]
                 output.push((tail_acc % 256) as u8);
                 tail_acc /= 256;
             }
         }
         while tail_acc > 0 {
+            #[allow(clippy::cast_possible_truncation)]
             output.push((tail_acc % 256) as u8);
             tail_acc /= 256;
         }

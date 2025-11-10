@@ -76,9 +76,9 @@ fn encode_scalar(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
     let mut num_bytes = bytes.len();
     while num_bytes > 0 {
         let mut remainder = 0u32;
-        for i in 0..num_bytes {
-            let temp = remainder * 256u32 + u32::from(bytes[i]);
-            bytes[i] = (temp / 58) as u8;
+        for byte in bytes.iter_mut().take(num_bytes) {
+            let temp = remainder * 256u32 + u32::from(*byte);
+            *byte = (temp / 58) as u8;
             remainder = temp % 58;
         }
         output.push(VAL_TO_DIGIT[remainder as usize]);

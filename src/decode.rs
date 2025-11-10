@@ -61,10 +61,7 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
 /// Scalar fallback: Digit-by-digit accumulation (MSB first): multiply by 58, add digit at low.
 /// Builds little-endian byte array; reverse at end. No SIMD dispatch here.
 /// Enhanced: u32 for temp arith (fits 58*255 + 255 < 2^16).
-#[allow(
-    clippy::cast_lossless,
-    clippy::cast_possible_truncation
-)]
+#[allow(clippy::cast_lossless, clippy::cast_possible_truncation)]
 #[inline]
 fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<(), DecodeError> {
     for (i, &ch) in digits.iter().enumerate() {

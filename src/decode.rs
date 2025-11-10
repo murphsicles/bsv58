@@ -58,9 +58,9 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
     finish_decode(output, validate_checksum)
 }
-/// Scalar fallback: Digit-by-digit Horner accumulation with carry propagation.
-/// Processes high-to-low (MSB first); grows output as needed. No SIMD dispatch here.
-/// Enhanced: Branch-free where possible; u32 for temp arith (fits 58*255 + 255 < 2^16).
+/// Scalar fallback: Digit-by-digit accumulation (MSB first): multiply by 58, add digit at high.
+/// Processes left-to-right; grows output as needed. No SIMD dispatch here.
+/// Enhanced: u32 for temp arith (fits 58*255 + 255 < 2^16).
 #[allow(
     clippy::cast_lossless,
     clippy::cast_possible_truncation,
@@ -68,24 +68,43 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
 )]
 #[inline]
 fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<(), DecodeError> {
-    for (i, &ch) in digits.iter().enumerate() {
+    let mut i = 0;
+    for &ch in digits {
         let val = DIGIT_TO_VAL[ch as usize];
         if val == 255 {
             return Err(DecodeError::InvalidChar(zeros + i));
         }
-        let mut carry: u32 = u32::from(val);
-        let mut j = 0;
-        while carry > 0 || j < output.len() {
-            if j < output.len() {
-                carry += u32::from(output[j]) * 58;
-            }
-            output[j] = (carry % 256) as u8;
+        // Multiply current number (little-endian) by 58
+        let mut carry = 0u32;
+        for b in output.iter_mut() {
+            let temp = u32::from(*b) * 58 + carry;
+            *b = (temp % 256) as u8;
+            carry = temp / 256;
+        }
+        while carry > 0 {
+            output.push((carry % 256) as u8);
             carry /= 256;
-            j += 1;
-            if j == output.len() {
-                output.push(0);
+        }
+        // Add val to high end (propagate carry lowward if overflow)
+        let mut add_carry = u32::from(val);
+        let mut k = output.len().saturating_sub(1);
+        while add_carry > 0 {
+            if k < output.len() {
+                let temp = u32::from(output[k]) + add_carry;
+                output[k] = (temp % 256) as u8;
+                add_carry = temp / 256;
+                if k > 0 {
+                    k -= 1;
+                } else {
+                    k = output.len();
+                }
+            } else {
+                output.push((add_carry % 256) as u8);
+                add_carry /= 256;
+                k = output.len() - 1;
             }
         }
+        i += 1;
     }
     Ok(())
 }

@@ -48,16 +48,16 @@ pub fn encode(input: &[u8]) -> String {
     {
         #[cfg(target_arch = "x86_64")]
         {
-            if non_zero_len >= 32 && is_x86_feature_detected!("avx2") {
-                encode_simd_x86(&mut output, &mut limbs);
+            if non_zero_len >= 32 && std::arch::is_x86_feature_detected!("avx2") {
+                unsafe { encode_simd_x86(&mut output, &mut limbs); }
             } else {
                 encode_scalar(&mut output, &mut limbs);
             }
         }
         #[cfg(target_arch = "aarch64")]
         {
-            if non_zero_len >= 16 && is_aarch64_feature_detected!("neon") {
-                encode_simd_arm(&mut output, &mut limbs);
+            if non_zero_len >= 16 && std::arch::is_aarch64_feature_detected!("neon") {
+                unsafe { encode_simd_arm(&mut output, &mut limbs); }
             } else {
                 encode_scalar(&mut output, &mut limbs);
             }
@@ -124,22 +124,26 @@ fn div_u64(n: u64, d: u64) -> u64 {
     if n >= q.wrapping_mul(d) { q } else { q.saturating_sub(1) }
 }
 
+/// Extract low u64 from __m256i (unrolled for lanes).
+#[inline]
+unsafe fn extract_low_u64(v: x86_64::__m256i) -> u64 {
+    std::mem::transmute::<x86_64::__m128i, u64>(x86_64::_mm256_castsi256_si128(v))
+}
+
+/// Extract lane u64 from __m256i.
+#[inline]
+unsafe fn extract_lane_u64(v: x86_64::__m256i, lane: usize) -> u64 {
+    let bytes = std::slice::from_raw_parts(std::mem::transmute::<x86_64::__m256i, *const u8>(&v), 32);
+    u64::from_le_bytes([bytes[lane * 8], bytes[lane * 8 + 1], bytes[lane * 8 + 2], bytes[lane * 8 + 3], bytes[lane * 8 + 4], bytes[lane * 8 + 5], bytes[lane * 8 + 6], bytes[lane * 8 + 7]])
+}
+
 /// x86 AVX2 SIMD encode: Batch 4 u64 limbs (32 bytes) via intrinsics (256-bit).
 /// Vector reciprocal mul div + unrolled carry prop; ~4x scalar on long.
 /// Processes high-to-low; cascade rem to next batch.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[target_feature(enable = "avx2")]
-#[inline]
 unsafe fn encode_simd_x86(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
-    use x86_64::_mm256_loadu_si256 as loadu;
-    use x86_64::_mm256_storeu_si256 as storeu;
-    use x86_64::_mm256_mul_epu32 as mul_epu32;
-    use x86_64::_mm256_srli_epi64 as srli_epi64;
-    use x86_64::_mm256_add_epi64 as add_epi64;
-    use x86_64::_mm256_sub_epi64 as sub_epi64;
-    use x86_64::_mm256_cmpgt_epi64 as cmpgt_epi64;
-    use x86_64::_mm256_blendv_epi8 as blendv; // For conditional adjust
-
+    use x86_64::*;
     let ptr = limbs.as_mut_ptr();
     let mut i = 0isize;
     let end = limbs.len() as isize;
@@ -147,32 +151,40 @@ unsafe fn encode_simd_x86(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
 
     while i + 4 <= end {
         let limb_ptr = ptr.add(i as usize);
-        let batch = loadu(limb_ptr as *const _);
+        let batch = _mm256_loadu_si256(limb_ptr as *const _);
 
-        // Vector div: High 32b * MAGIC >>32 approx q (u64 split)
+        // Approx q: (hi*MAGIC>>32) + (lo*MAGIC>>32)
         let hi = _mm256_srli_epi64(batch, 32);
         let lo = _mm256_and_si256(batch, _mm256_set1_epi64x(0xFFFFFFFF));
-        let q_approx = add_epi64(srli_epi64(mul_epu32(hi, _mm256_set1_epi64x(MAGIC as i64)), 32) as _, srli_epi64(mul_epu32(lo, _mm256_set1_epi64x(MAGIC as i64)), 32) as _);
+        let q_approx_lo = _mm256_srli_epi64(_mm256_mul_epu32(lo, _mm256_set1_epi64x(MAGIC as i64)), 32);
+        let q_approx_hi = _mm256_srli_epi64(_mm256_mul_epu32(hi, _mm256_set1_epi64x(MAGIC as i64)), 32);
+        let q_approx = _mm256_add_epi64(q_approx_lo, q_approx_hi);
 
-        // Rem approx: n - q*d (vector mul for %)
-        let rem_approx = sub_epi64(batch, mul_epu32(q_approx as _, _mm256_set1_epi64x(BASE as i64) as _));
+        // Rem approx: batch - q*BASE
+        let rem_approx = _mm256_sub_epi64(batch, _mm256_mul_epu32(q_approx, _mm256_set1_epi64x(BASE as i64)));
 
-        // Fixup overest (rare): If rem >= BASE, q--, rem += BASE
-        let mask = cmpgt_epi64(rem_approx as _, _mm256_set1_epi64x(BASE as i64) as _);
-        let q = sub_epi64(q_approx as _, _mm256_and_si256(mask as _, _mm256_set1_epi64x(1)));
-        let rem = add_epi64(rem_approx as _, _mm256_and_si256(_mm256_set1_epi64x(BASE as i64), mask as _));
+        // Fixup: if rem >= BASE, q--, rem += BASE
+        let mask = _mm256_cmpgt_epi64(rem_approx, _mm256_set1_epi64x(BASE as i64));
+        let q = _mm256_sub_epi64(q_approx, _mm256_and_si256(mask, _mm256_set1_epi64x(1)));
+        let rem = _mm256_add_epi64(rem_approx, _mm256_and_si256(_mm256_set1_epi64x(BASE as i64), mask));
 
-        // Cascade carry: Sum low rem to next high
-        carry += extract_low_u64(rem) as u64; // Scalar sum for simplicity (unrolled)
+        // Cascade carry: Sum low rem to next high (scalar unrolled for 4 lanes)
+        carry += extract_lane_u64(rem, 0) as u64;
+        carry += extract_lane_u64(rem, 1) as u64;
+        carry += extract_lane_u64(rem, 2) as u64;
+        carry += extract_lane_u64(rem, 3) as u64;
 
-        // Store q back (shifted)
-        storeu(limb_ptr as *mut _, q as _);
+        // Store q back
+        _mm256_storeu_si256(limb_ptr as *mut _, q);
 
-        // Push rem digits (low-first)
+        // Push rem digits (low-first, unrolled)
+        let mut lane_carry = carry;
         for lane in 0..4 {
-            output.push(VAL_TO_DIGIT[(extract_lane_u64(rem, lane) + carry) as usize % BASE as usize]);
-            carry = (extract_lane_u64(rem, lane) + carry) / BASE;
+            let r = extract_lane_u64(rem, lane) + lane_carry as u64;
+            output.push(VAL_TO_DIGIT[(r % BASE) as usize]);
+            lane_carry = r / BASE;
         }
+        carry = lane_carry;
 
         i += 4;
     }
@@ -188,10 +200,8 @@ unsafe fn encode_simd_x86(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
 /// High-to-low; cascade rem.
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
 #[target_feature(enable = "neon")]
-#[inline]
 unsafe fn encode_simd_arm(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
-    use aarch64::{vld1q_u64 as loadq, vst1q_u64 as storeq, vmull_u32 as mul_u32, vshrq_n_u64 as shrq, vaddq_u64 as addq, vsubq_u64 as subq, vceqq_u64 as ceqq, vbslq_u8 as bslq};
-
+    use aarch64::*;
     let ptr = limbs.as_mut_ptr();
     let mut i = 0isize;
     let end = limbs.len() as isize;
@@ -199,33 +209,36 @@ unsafe fn encode_simd_arm(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
 
     while i + 2 <= end {
         let limb_ptr = ptr.add(i as usize);
-        let batch = loadq(limb_ptr as *const _);
+        let batch = vld1q_u64(limb_ptr as *const _);
 
         // Approx q: (hi*MAGIC>>32) + (lo*MAGIC>>32)
         let hi = vshrq_n_u64(batch, 32);
-        let lo = vandq_u64(batch, vdupq_n_u64(0xFFFFFFFF)); // Mask low
-        let q_approx = vaddq_u64(vshrq_n_u64(vmull_u32(hi as _, vdup_n_u32(MAGIC as u32) as _), 32) as _, vshrq_n_u64(vmull_u32(lo as _, vdup_n_u32(MAGIC as u32) as _), 32) as _);
+        let lo = vandq_u64(batch, vdupq_n_u64(0xFFFFFFFF));
+        let q_approx = vaddq_u64(vshrq_n_u64(vmulq_n_u64(hi, MAGIC), 32), vshrq_n_u64(vmulq_n_u64(lo, MAGIC), 32));
 
         // Rem: batch - q*BASE
         let rem_approx = vsubq_u64(batch, vmulq_n_u64(q_approx, BASE));
 
         // Fixup: if rem >= BASE, q--, rem += BASE
-        let mask = vceqq_u64(rem_approx, vdupq_n_u64(BASE)); // EQ for >=? Adjust to GT
         let mask_gt = vcgeq_u64(rem_approx, vdupq_n_u64(BASE));
-        let q = vsubq_u64(q_approx, vandq_u64(vdupq_n_u64(1), mask_gt as _));
-        let rem = vaddq_u64(rem_approx, vandq_u64(vdupq_n_u64(BASE), mask_gt as _));
+        let q = vsubq_u64(q_approx, vandq_u64(vdupq_n_u64(1), mask_gt));
+        let rem = vaddq_u64(rem_approx, vandq_u64(vdupq_n_u64(BASE), mask_gt));
 
-        // Carry sum low
+        // Carry sum low (unrolled)
         carry += vgetq_lane_u64(rem, 0) as u64;
+        carry += vgetq_lane_u64(rem, 1) as u64;
 
         // Store q
-        storeq(limb_ptr as *mut _, q);
+        vst1q_u64(limb_ptr as *mut _, q);
 
-        // Push digits
-        output.push(VAL_TO_DIGIT[(vgetq_lane_u64(rem, 0) + carry) as usize % BASE as usize]);
-        carry = (vgetq_lane_u64(rem, 0) + carry) / BASE;
-        output.push(VAL_TO_DIGIT[(vgetq_lane_u64(rem, 1) + carry) as usize % BASE as usize]);
-        carry = (vgetq_lane_u64(rem, 1) + carry) / BASE;
+        // Push digits (unrolled)
+        let mut lane_carry = carry;
+        let r0 = vgetq_lane_u64(rem, 0) + lane_carry as u64;
+        output.push(VAL_TO_DIGIT[(r0 % BASE) as usize]);
+        lane_carry = r0 / BASE;
+        let r1 = vgetq_lane_u64(rem, 1) + lane_carry as u64;
+        output.push(VAL_TO_DIGIT[(r1 % BASE) as usize]);
+        carry = r1 / BASE;
 
         i += 2;
     }
@@ -239,10 +252,10 @@ unsafe fn encode_simd_arm(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
 /// Scalar tail for SIMD remainders + carry.
 #[inline]
 fn encode_scalar_tail(output: &mut Vec<u8>, limbs: &mut [u64], mut carry: u64) {
-    for &mut limb in limbs.iter_mut() {
-        let temp = carry << 56 | limb >> 8; // Align
+    for limb in limbs.iter_mut() {
+        let temp = carry << 56 | *limb >> 8; // Align
         let q = div_u64(temp, BASE);
-        limb = (limb << 8) | (q << 56);
+        *limb = (*limb << 8) | (q << 56);
         let rem = (temp - q * BASE + carry) % BASE;
         output.push(VAL_TO_DIGIT[rem as usize]);
         carry = (temp - q * BASE) / BASE;

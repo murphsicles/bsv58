@@ -16,28 +16,28 @@ env:
 jobs:
   check:
     name: Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
-    - name: Install Rust (stable)
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: rustfmt, clippy
-        edition: "2024" # Requires 1.85+ (stable since Jul 2024)
-    - name: Cache
-      uses: Swatinem/rust-cache@v2
-    - name: Check
-      run: cargo check --all-features
-    - name: Clippy
-      run: cargo clippy --all-features -- -D clippy::perf -D clippy::pedantic -D clippy::nursery
-    - name: Fmt
-      run: cargo fmt --all -- --check
-    - name: Install nightly (for udeps only)
-      run: rustup toolchain install nightly --component clippy
-    - name: Install cargo-udeps (pinned)
-      run: cargo install cargo-udeps --git https://github.com/est31/cargo-udeps --tag v0.1.60 --force
-    - name: Udeps (no unused deps)
-      run: cargo +nightly udeps --all-features --all-targets
+      - uses: actions/checkout@v4
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          edition: "2024" # Requires 1.85+ (stable since Jul 2024)
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Check
+        run: cargo check --all-features
+      - name: Clippy
+        run: cargo clippy --all-features -- -D clippy::perf -D clippy::pedantic -D clippy::nursery
+      - name: Fmt
+        run: cargo fmt --all -- --check
+      - name: Install nightly (for udeps only)
+        run: rustup toolchain install nightly --component clippy
+      - name: Install cargo-udeps (pinned)
+        run: cargo install cargo-udeps --git https://github.com/est31/cargo-udeps --tag v0.1.60 --force
+      - name: Udeps (no unused deps)
+        run: cargo +nightly udeps --all-features --all-targets
   test:
     name: Test
     needs: check
@@ -45,125 +45,124 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: aarch64-unknown-linux-gnu
           - os: macos-latest
             target: aarch64-apple-darwin
           - os: windows-latest # Add Win for cross
             target: x86_64-pc-windows-msvc
     steps:
-    - uses: actions/checkout@v4
-    - name: Install Rust (stable, cross)
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: ${{ matrix.target }}
-        components: rustfmt, clippy
-        edition: "2024"
-    - name: Install cross (for aarch64-linux)
-      if: matrix.target == 'aarch64-unknown-linux-gnu'
-      run: cargo install --git https://github.com/cross-rs/cross cross
-    - name: Cache
-      uses: Swatinem/rust-cache@v2
-    - name: Build
-      if: matrix.target == 'x86_64-unknown-linux-gnu'
-      run: cargo build --target ${{ matrix.target }} --all-features --verbose
-    - name: Build (cross)
-      if: matrix.target == 'aarch64-unknown-linux-gnu'
-      run: cross build --target ${{ matrix.target }} --all-features --verbose
-    - name: Run tests
-      if: matrix.target == 'x86_64-unknown-linux-gnu'
-      run: cargo test --target ${{ matrix.target }} --all-features --verbose
-    - name: Run tests (cross)
-      if: matrix.target == 'aarch64-unknown-linux-gnu'
-      run: cross test --target ${{ matrix.target }} --all-features --verbose
-    - name: Install tarpaulin (Linux only)
-      if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
-      run: cargo install cargo-tarpaulin --version 0.34.1 --locked
-    - name: Coverage (Linux only)
-      if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
-      run: cargo tarpaulin --all-features --out Xml
-    - name: Upload coverage
-      if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
-      uses: codecov/codecov-action@v4
-      with:
-        file: ./tarpaulin-report.xml
+      - uses: actions/checkout@v4
+      - name: Install Rust (stable, cross)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rustfmt, clippy
+          edition: "2024"
+      - name: Install cross (for aarch64-linux)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: cargo install --git https://github.com/cross-rs/cross cross
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: |
+          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+            cross build --target ${{ matrix.target }} --all-features --verbose
+          else
+            cargo build --target ${{ matrix.target }} --all-features --verbose
+          fi
+      - name: Run tests
+        run: |
+          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+            cross test --target ${{ matrix.target }} --all-features --verbose
+          else
+            cargo test --target ${{ matrix.target }} --all-features --verbose
+          fi
+      - name: Install tarpaulin (Linux only)
+        if: matrix.os == 'ubuntu-24.04' && matrix.target == 'x86_64-unknown-linux-gnu'
+        run: cargo install cargo-tarpaulin --version 0.34.1 --locked
+      - name: Coverage (Linux only)
+        if: matrix.os == 'ubuntu-24.04' && matrix.target == 'x86_64-unknown-linux-gnu'
+        run: cargo tarpaulin --all-features --out Xml
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-24.04' && matrix.target == 'x86_64-unknown-linux-gnu'
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./tarpaulin-report.xml
   bench:
     name: Bench
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: github.event_name != 'schedule' || always() # Run always on cron
     steps:
-    - uses: actions/checkout@v4
-    - name: Install Rust (stable)
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        edition: "2024"
-    - name: Cache
-      uses: Swatinem/rust-cache@v2
-    - name: Install deps (Criterion HTML)
-      run: sudo apt-get update && sudo apt-get install -y cmake linux-tools-common linux-tools-generic
-    - name: Run benches
-      run: |
-        if [[ "${{ github.event_name }}" == "schedule" || "${{ github.ref }}" == "refs/pull/"* ]]; then
-          cargo bench --all-features --bench bench
-        else
-          cargo bench --all-features --bench bench --no-run
-        fi
-    - name: Upload bench report
-      if: success()
-      uses: actions/upload-artifact@v4
-      with:
-        name: bench-report
-        path: target/criterion/
-        retention-days: 30
-        compression-level: 6
+      - uses: actions/checkout@v4
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          edition: "2024"
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Install deps (Criterion HTML)
+        run: sudo apt-get update && sudo apt-get install -y cmake linux-tools-common linux-tools-generic
+      - name: Run benches
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" || "${{ github.ref }}" == "refs/pull/"* ]]; then
+            cargo bench --all-features --bench bench
+          else
+            cargo bench --all-features --bench bench --no-run
+          fi
+      - name: Upload bench report
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-report
+          path: target/criterion/
+          retention-days: 30
+          compression-level: 6
   cross:
     name: Cross-Compile
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
-        target: [x86_64-pc-windows-msvc, aarch64-unknown-linux-gnu]
+        target: [aarch64-unknown-linux-gnu]
     steps:
-    - uses: actions/checkout@v4
-    - name: Install Rust (stable, cross)
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: ${{ matrix.target }}
-        edition: "2024"
-    - name: Install cross (for aarch64-linux)
-      if: matrix.target == 'aarch64-unknown-linux-gnu'
-      run: cargo install --git https://github.com/cross-rs/cross cross
-    - name: Cache
-      uses: Swatinem/rust-cache@v2
-    - name: Cross-build (release)
-      if: matrix.target == 'aarch64-unknown-linux-gnu'
-      run: cross build --target ${{ matrix.target }} --all-features --release --verbose
-    - name: Cross-build (release)
-      if: matrix.target == 'x86_64-pc-windows-msvc'
-      run: cargo build --target ${{ matrix.target }} --all-features --release --verbose
+      - uses: actions/checkout@v4
+      - name: Install Rust (stable, cross)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          edition: "2024"
+      - name: Install cross (for aarch64-linux)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: cargo install --git https://github.com/cross-rs/cross cross
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Cross-build (release)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: cross build --target ${{ matrix.target }} --all-features --release --verbose
   perf-regression:
     name: Perf Regression
     if: github.event_name == 'schedule'
     needs: bench
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0 # Git history for baselines
-    - name: Install Rust (stable)
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        edition: "2024"
-    - name: Cache
-      uses: Swatinem/rust-cache@v2
-    - name: Run full benches (JSON for parsing)
-      run: cargo bench --all-features --bench bench --message-format json
-    - name: Detect regression (>5% slowdown)
-      uses: 99si/simple-bench-action@v1
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        threshold: 5 # Tight for perf-critical
-        json: true
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Git history for baselines
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          edition: "2024"
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Run full benches (JSON for parsing)
+        run: cargo bench --all-features --bench bench --message-format json
+      - name: Detect regression (>5% slowdown)
+        uses: 99si/simple-bench-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          threshold: 5 # Tight for perf-critical
+          json: true

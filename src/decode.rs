@@ -54,22 +54,20 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
     }
     // Scalar only for now; TODO: SIMD batch with high-first carry
     decode_scalar(&mut output, digits, zeros)?;
-    output.reverse(); // Low-first to BE
+    output.reverse(); // Little-endian to big-endian
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
     finish_decode(output, validate_checksum)
 }
-/// Scalar fallback: Digit-by-digit accumulation (MSB first): multiply by 58, add digit at high.
-/// Processes left-to-right; grows output as needed. No SIMD dispatch here.
+/// Scalar fallback: Digit-by-digit accumulation (MSB first): multiply by 58, add digit at low.
+/// Builds little-endian byte array; reverse at end. No SIMD dispatch here.
 /// Enhanced: u32 for temp arith (fits 58*255 + 255 < 2^16).
 #[allow(
     clippy::cast_lossless,
-    clippy::cast_possible_truncation,
-    clippy::explicit_counter_loop
+    clippy::cast_possible_truncation
 )]
 #[inline]
 fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<(), DecodeError> {
-    let mut i = 0;
-    for &ch in digits {
+    for (i, &ch) in digits.iter().enumerate() {
         let val = DIGIT_TO_VAL[ch as usize];
         if val == 255 {
             return Err(DecodeError::InvalidChar(zeros + i));
@@ -85,26 +83,20 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) -> Result<()
             output.push((carry % 256) as u8);
             carry /= 256;
         }
-        // Add val to high end (propagate carry lowward if overflow)
+        // Add val to low end (propagate carry highward)
         let mut add_carry = u32::from(val);
-        let mut k = output.len().saturating_sub(1);
+        let mut k = 0;
         while add_carry > 0 {
             if k < output.len() {
                 let temp = u32::from(output[k]) + add_carry;
                 output[k] = (temp % 256) as u8;
                 add_carry = temp / 256;
-                if k > 0 {
-                    k -= 1;
-                } else {
-                    k = output.len();
-                }
             } else {
                 output.push((add_carry % 256) as u8);
                 add_carry /= 256;
-                k = output.len() - 1;
             }
+            k += 1;
         }
-        i += 1;
     }
     Ok(())
 }

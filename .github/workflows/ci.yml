@@ -66,15 +66,17 @@ jobs:
         run: cargo install --git https://github.com/cross-rs/cross cross
       - name: Cache
         uses: Swatinem/rust-cache@v2
-      - name: Build (native)
+      - name: Build
         if: matrix.target != 'aarch64-unknown-linux-gnu'
         run: cargo build --target ${{ matrix.target }} --all-features --verbose
+        shell: bash
       - name: Build (cross)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: cross build --target ${{ matrix.target }} --all-features --verbose
-      - name: Run tests (native)
+      - name: Run tests
         if: matrix.target != 'aarch64-unknown-linux-gnu'
         run: cargo test --target ${{ matrix.target }} --all-features --verbose
+        shell: bash
       - name: Run tests (cross)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: cross test --target ${{ matrix.target }} --all-features --verbose
@@ -134,12 +136,10 @@ jobs:
           targets: ${{ matrix.target }}
           edition: "2024"
       - name: Install cross (for aarch64-linux)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: cargo install --git https://github.com/cross-rs/cross cross
       - name: Cache
         uses: Swatinem/rust-cache@v2
       - name: Cross-build (release)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: cross build --target ${{ matrix.target }} --all-features --release --verbose
   perf-regression:
     name: Perf Regression

@@ -98,7 +98,7 @@ jobs:
     - name: Cache
       uses: Swatinem/rust-cache@v2
     - name: Install deps (Criterion HTML)
-      run: sudo apt-get update && sudo apt-get install -y cmake linux-perf
+      run: sudo apt-get update && sudo apt-get install -y cmake linux-tools-common linux-tools-generic
     - name: Run benches
       run: |
         if [[ "${{ github.event_name }}" == "schedule" || "${{ github.ref }}" == "refs/pull/"* ]]; then

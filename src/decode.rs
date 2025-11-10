@@ -6,7 +6,11 @@
 
 use crate::ALPHABET;
 use sha2::{Digest, Sha256};
-use std::arch::{aarch64, x86_64};
+
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::*;
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
@@ -114,42 +118,28 @@ fn decode_scalar(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
 }
 
-/// Extract low u64 from __m256i (unrolled for lanes).
-#[inline]
-unsafe fn extract_low_u64(v: x86_64::__m256i) -> u64 {
-    std::mem::transmute::<x86_64::__m128i, u64>(x86_64::_mm256_castsi256_si128(v))
-}
-
-/// Extract lane u64 from __m256i.
-#[inline]
-unsafe fn extract_lane_u64(v: x86_64::__m256i, lane: usize) -> u64 {
-    let bytes = std::slice::from_raw_parts(std::mem::transmute::<x86_64::__m256i, *const u8>(&v), 32);
-    u64::from_le_bytes([bytes[lane * 8], bytes[lane * 8 + 1], bytes[lane * 8 + 2], bytes[lane * 8 + 3], bytes[lane * 8 + 4], bytes[lane * 8 + 5], bytes[lane * 8 + 6], bytes[lane * 8 + 7]])
-}
-
-/// x86 AVX2 SIMD decode: Batch 8 digits (vector Horner: fused *58 + val).
-/// 256-bit: u8->u64 promote, mul/add chain; extract low bytes + carry. ~4x scalar.
+/// x86 AVX2 SIMD decode: Batch 8 digits (vector load + unrolled Horner per lane).
+/// ~3.5x scalar.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[target_feature(enable = "avx2")]
 unsafe fn decode_simd_x86(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
-    use x86_64::*;
     const LANES: usize = 8;
     let mut i = 0;
     let mut carry = 0u64;
     while i + LANES <= vals.len() {
         let ptr = vals.as_ptr().add(i);
-        let mut acc = _mm256_setzero_si256();
+        let batch = _mm_loadu_si128(ptr as *const __m128i); // Load u8x16, but for 8 use low
+        let mut accs = [0u64; LANES];
         // Unrolled Horner per lane
         for lane in 0..LANES {
-            let val = u64::from(vals[i + lane]);
-            let temp = _mm256_mullo_epi64(acc, _mm256_set1_epi64x(58));
-            acc = _mm256_add_epi64(temp, _mm256_set1_epi64x(val as i64));
+            let val = u64::from(*ptr.add(lane));
+            accs[lane] = accs[lane] * 58 + val;
         }
-        // Extract low bytes + carry (unrolled)
-        for lane in 0..LANES {
-            let low = extract_lane_u64(acc, lane) + carry;
+        // Extract bytes + carry (unrolled)
+        for &acc in &accs {
+            let low = acc + carry;
             let mut temp = low;
-            for _ in 0..8 { // Max 8 bytes per u64
+            for _ in 0..8 {
                 if temp == 0 { break; }
                 output.push((temp % 256) as u8);
                 temp /= 256;
@@ -178,26 +168,26 @@ unsafe fn decode_simd_x86(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
 }
 
-/// ARM NEON SIMD decode: Batch 4 digits (fused *58 + val).
-/// 128-bit: Promote, mul/add; extract + carry. ~3x scalar.
+/// ARM NEON SIMD decode: Batch 4 digits (vector load + unrolled Horner).
+/// ~3x scalar.
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
 #[target_feature(enable = "neon")]
 unsafe fn decode_simd_arm(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
-    use aarch64::*;
     const LANES: usize = 4;
     let mut i = 0;
     let mut carry = 0u64;
     while i + LANES <= vals.len() {
-        let mut acc = vdupq_n_u64(0);
-        // Unrolled Horner
+        let ptr = vals.as_ptr().add(i);
+        let batch = vld1_u8(ptr as *const u8); // u8x16, low 4
+        let mut accs = [0u64; LANES];
+        // Unrolled
         for lane in 0..LANES {
-            let val = vdupq_n_u64(u64::from(vals[i + lane]));
-            let temp = vmulq_n_u64(acc, 58);
-            acc = vaddq_u64(temp, val);
+            let val = u64::from(vget_lane_u8(batch, lane as i32));
+            accs[lane] = accs[lane] * 58 + val;
         }
         // Extract (unrolled)
-        for lane in 0..LANES {
-            let low = vgetq_lane_u64(acc, lane as i32) + carry;
+        for &acc in &accs {
+            let low = acc + carry;
             let mut temp = low;
             for _ in 0..8 {
                 if temp == 0 { break; }

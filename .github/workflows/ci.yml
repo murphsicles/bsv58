@@ -66,20 +66,18 @@ jobs:
         run: cargo install --git https://github.com/cross-rs/cross cross
       - name: Cache
         uses: Swatinem/rust-cache@v2
-      - name: Build
-        run: |
-          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
-            cross build --target ${{ matrix.target }} --all-features --verbose
-          else
-            cargo build --target ${{ matrix.target }} --all-features --verbose
-          fi
-      - name: Run tests
-        run: |
-          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
-            cross test --target ${{ matrix.target }} --all-features --verbose
-          else
-            cargo test --target ${{ matrix.target }} --all-features --verbose
-          fi
+      - name: Build (native)
+        if: matrix.target != 'aarch64-unknown-linux-gnu'
+        run: cargo build --target ${{ matrix.target }} --all-features --verbose
+      - name: Build (cross)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: cross build --target ${{ matrix.target }} --all-features --verbose
+      - name: Run tests (native)
+        if: matrix.target != 'aarch64-unknown-linux-gnu'
+        run: cargo test --target ${{ matrix.target }} --all-features --verbose
+      - name: Run tests (cross)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: cross test --target ${{ matrix.target }} --all-features --verbose
       - name: Install tarpaulin (Linux only)
         if: matrix.os == 'ubuntu-24.04' && matrix.target == 'x86_64-unknown-linux-gnu'
         run: cargo install cargo-tarpaulin --version 0.34.1 --locked

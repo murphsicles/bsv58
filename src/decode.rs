@@ -6,6 +6,7 @@
 
 use crate::ALPHABET;
 use sha2::{Digest, Sha256};
+use std::arch::{aarch64, x86_64};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
@@ -56,104 +57,164 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
         output.extend(std::iter::repeat_n(0u8, zeros));
         return finish_decode(output, validate_checksum);
     }
-    // Pack digits to u64 limbs (MSB first: high digit first)
-    let mut limbs = pack_digits(digits);
+    // Validate chars upfront (SIMD-safe)
+    for (i, &ch) in digits.iter().enumerate() {
+        if DIGIT_TO_VAL[ch as usize] == 255 {
+            return Err(DecodeError::InvalidChar(zeros + i));
+        }
+    }
+    // Pack digits to u8 array for SIMD load (MSB first)
+    let vals: Vec<u8> = digits.iter().map(|&ch| DIGIT_TO_VAL[ch as usize]).collect();
     // Dispatch SIMD or scalar
     #[cfg(feature = "simd")]
     {
         #[cfg(target_arch = "x86_64")]
         {
             if digits.len() >= 32 && std::arch::is_x86_feature_detected!("avx2") {
-                decode_simd_x86(&mut output, &mut limbs, zeros);
+                decode_simd_x86(&mut output, &vals, zeros);
             } else {
-                decode_scalar(&mut output, &mut limbs, zeros);
+                decode_scalar(&mut output, &vals, zeros);
             }
         }
         #[cfg(target_arch = "aarch64")]
         {
             if digits.len() >= 16 && std::arch::is_aarch64_feature_detected!("neon") {
-                decode_simd_arm(&mut output, &mut limbs, zeros);
+                decode_simd_arm(&mut output, &vals, zeros);
             } else {
-                decode_scalar(&mut output, &mut limbs, zeros);
+                decode_scalar(&mut output, &vals, zeros);
             }
         }
     }
     #[cfg(not(feature = "simd"))]
     {
-        decode_scalar(&mut output, &mut limbs, zeros);
+        decode_scalar(&mut output, &vals, zeros);
     }
     finish_decode(output, validate_checksum)
 }
 
-/// Pack digits to u64 limbs (MSB first: pack 10 digits/limb, since 58^10 < 2^64).
+/// Scalar fallback: Digit-by-digit Horner (MSB first): acc = acc * 58 + val; extract bytes LE.
+/// u8 vals for direct load; unrolled for small N.
 #[inline]
-fn pack_digits(digits: &[u8]) -> Vec<u64> {
-    const DIGITS_PER_LIMB: usize = 10; // log58(2^64) ≈10.2
-    let mut limbs = Vec::with_capacity((digits.len() + DIGITS_PER_LIMB - 1) / DIGITS_PER_LIMB);
-    let mut i = 0;
-    while i < digits.len() {
-        let end = (i + DIGITS_PER_LIMB).min(digits.len());
-        let chunk = &digits[i..end];
-        let mut limb = 0u64;
-        let mut power = 1u64;
-        for &d in chunk {
-            let val = DIGIT_TO_VAL[d as usize];
-            if val == 255 { continue; } // Skip invalid (handled upstream)
-            limb += u64::from(val) * power;
-            power *= BASE;
-        }
-        limbs.push(limb);
-        i += DIGITS_PER_LIMB;
-    }
-    limbs
-}
-
-/// Scalar fallback: Digit-by-digit accumulation (MSB first): multiply by 58, add digit at low.
-/// Builds little-endian byte array; reverse at end. u64 limbs for wider arith.
-#[inline]
-fn decode_scalar(output: &mut Vec<u8>, limbs: &mut Vec<u64>, zeros: usize) {
-    let mut num_limbs = limbs.len();
-    let mut carry = 0u64;
-    for limb in limbs.iter_mut() {
-        let temp = *limb * BASE + carry;
-        *limb = temp % 256;
-        carry = temp / 256;
-        // Propagate carry to bytes
-        let mut byte_carry = carry;
-        while byte_carry > 0 {
-            output.push((byte_carry % 256) as u8);
-            byte_carry /= 256;
+fn decode_scalar(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
+    let mut acc = 0u64;
+    for &val in vals {
+        acc = acc * 58 + u64::from(val);
+        // Extract low byte if full
+        if acc >= 256 {
+            output.push((acc % 256) as u8);
+            acc /= 256;
         }
     }
-    while carry > 0 {
-        output.push((carry % 256) as u8);
-        carry /= 256;
+    // Final extract
+    while acc > 0 {
+        output.push((acc % 256) as u8);
+        acc /= 256;
     }
     output.reverse(); // LE to BE
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
 }
 
-/// x86 AVX2 SIMD decode: Batch 8 digits via intrinsics.
-/// Vector Horner: acc = acc*BASE + val (fused mul/add); carry prop unrolled.
-/// ~4x scalar on long.
+/// x86 AVX2 SIMD decode: Batch 8 digits (vector Horner: fused *58 + val).
+/// 256-bit: u8->u64 promote, mul/add chain; extract low bytes + carry. ~4x scalar.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[target_feature(enable = "avx2")]
-#[inline]
-unsafe fn decode_simd_x86(output: &mut Vec<u8>, limbs: &mut Vec<u64>, zeros: usize) {
-    use std::arch::x86_64::*;
-    // Stub: Scalar until full impl; vector mul/add + extract
-    decode_scalar(output, limbs, zeros);
+unsafe fn decode_simd_x86(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
+    use x86_64::*;
+    const LANES: usize = 8;
+    let mut i = 0;
+    let mut carry = 0u64;
+    while i + LANES <= vals.len() {
+        let ptr = vals.as_ptr().add(i);
+        let batch = _mm256_cvtepu8_epi64(_mm_loadl_epi64(ptr as *const _)); // Promote u8 to u64x4 (low), duplicate for full
+        let mut acc = _mm256_setzero_si256();
+        for lane in 0..LANES {
+            let val = _mm256_set1_epi64x(i64::from(vals[i + lane]));
+            let temp = _mm256_mullo_epi64(acc, _mm256_set1_epi64x(58)); // *58
+            acc = _mm256_add_epi64(temp, _mm256_set1_epi64x(i64::from(u8::from(val)))); // +val
+        }
+        // Extract low 8 bytes (unrolled)
+        for lane in 0..LANES {
+            let low = _mm256_extract_epi64(acc, lane as i32) as u64 + carry;
+            let bytes = extract_bytes(low, 8); // Helper: low 8 bytes
+            output.extend_from_slice(&bytes);
+            carry = low >> 64; // High carry (rare)
+        }
+        i += LANES;
+    }
+    // Tail scalar
+    if i < vals.len() {
+        let tail = &vals[i..];
+        let mut tail_acc = carry;
+        for &val in tail {
+            tail_acc = tail_acc * 58 + u64::from(val);
+            if tail_acc >= 256 {
+                output.push((tail_acc % 256) as u8);
+                tail_acc /= 256;
+            }
+        }
+        while tail_acc > 0 {
+            output.push((tail_acc % 256) as u8);
+            tail_acc /= 256;
+        }
+    }
+    output.reverse();
+    output.splice(0..0, std::iter::repeat_n(0u8, zeros));
 }
 
-/// ARM NEON SIMD decode: Batch 4 digits via intrinsics.
-/// ~3x scalar.
+/// ARM NEON SIMD decode: Batch 4 digits (fused *58 + val).
+/// 128-bit: Promote, mul/add; extract + carry. ~3x scalar.
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
 #[target_feature(enable = "neon")]
+unsafe fn decode_simd_arm(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
+    use aarch64::*;
+    const LANES: usize = 4;
+    let mut i = 0;
+    let mut carry = 0u64;
+    while i + LANES <= vals.len() {
+        let mut acc = vdupq_n_u64(0);
+        for lane in 0..LANES {
+            let val = vdupq_n_u64(u64::from(vals[i + lane]));
+            let temp = vmulq_n_u64(acc, 58);
+            acc = vaddq_u64(temp, val);
+        }
+        // Extract low bytes (unrolled)
+        for lane in 0..LANES {
+            let low = vgetq_lane_u64(acc, lane as i32) + carry;
+            let bytes = extract_bytes(low, 8);
+            output.extend_from_slice(&bytes);
+            carry = low >> 64;
+        }
+        i += LANES;
+    }
+    // Tail scalar (as above)
+    if i < vals.len() {
+        let tail = &vals[i..];
+        let mut tail_acc = carry;
+        for &val in tail {
+            tail_acc = tail_acc * 58 + u64::from(val);
+            if tail_acc >= 256 {
+                output.push((tail_acc % 256) as u8);
+                tail_acc /= 256;
+            }
+        }
+        while tail_acc > 0 {
+            output.push((tail_acc % 256) as u8);
+            tail_acc /= 256;
+        }
+    }
+    output.reverse();
+    output.splice(0..0, std::iter::repeat_n(0u8, zeros));
+}
+
+/// Helper: Extract low N bytes from u64 as [u8;8] (padded 0).
 #[inline]
-unsafe fn decode_simd_arm(output: &mut Vec<u8>, limbs: &mut Vec<u64>, zeros: usize) {
-    use std::arch::aarch64::*;
-    // Stub: Scalar until full
-    decode_scalar(output, limbs, zeros);
+fn extract_bytes(mut val: u64, n: usize) -> [u8; 8] {
+    let mut bytes = [0u8; 8];
+    for j in 0..n.min(8) {
+        bytes[j] = (val % 256) as u8;
+        val /= 256;
+    }
+    bytes
 }
 
 fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {

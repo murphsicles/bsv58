@@ -34,15 +34,14 @@ pub fn encode(input: &[u8]) -> String {
         // All zeros: Fast-path with repeated '1's
         return unsafe { String::from_utf8_unchecked(vec![b'1'; zeros]) };
     }
-    // Copy non_zero to buf (BE, no reverse for low-first process)
+    // Copy non_zero to buf (high byte first)
     let mut buf = non_zero.to_vec();
-    buf.reverse(); // LSB-first for scalar propagation
     // Dispatch SIMD or scalar
     #[cfg(feature = "simd")]
     {
         #[cfg(target_arch = "x86_64")]
         {
-            if non_zero_len >= 64 && std::arch::is_x86_feature_detected!("avx2") {
+            if non_zero_len >= 32 && std::arch::is_x86_feature_detected!("avx2") {
                 encode_simd_x86(&mut output, &mut buf);
             } else {
                 encode_scalar(&mut output, &mut buf);
@@ -50,7 +49,7 @@ pub fn encode(input: &[u8]) -> String {
         }
         #[cfg(target_arch = "aarch64")]
         {
-            if non_zero_len >= 64 && std::arch::is_aarch64_feature_detected!("neon") {
+            if non_zero_len >= 16 && std::arch::is_aarch64_feature_detected!("neon") {
                 encode_simd_arm(&mut output, &mut buf);
             } else {
                 encode_scalar(&mut output, &mut buf);
@@ -61,34 +60,33 @@ pub fn encode(input: &[u8]) -> String {
     {
         encode_scalar(&mut output, &mut buf);
     }
-    // Reverse digits: Divmod produces LSB-first, but Base58 is MSB-first
+    // Digits pushed low-first; reverse to MSB-first
     output.reverse();
     // Prepend leading '1's for zeros
     output.splice(0..0, std::iter::repeat_n(b'1', zeros));
     // To String: Unchecked UTF-8 (all chars ASCII 0x21-0x7A, valid)
     unsafe { String::from_utf8_unchecked(output) }
 }
-/// Scalar fallback: Byte-by-byte carry propagation (u64 handles ~8 bytes before /58).
+/// Scalar fallback: Big-endian div-by-58 (high-to-low rem prop); digits low-first.
 /// For short inputs (<16 bytes) or no SIMD. Optimizer unrolls ~4-8 iters naturally.
 /// Enhanced: Wrapping ops for safety on large inputs.
-#[allow(clippy::cast_possible_truncation)] // safe: temp / 58 <= 255
+#[allow(clippy::cast_possible_truncation)] // safe: temp / 58 <= 255*256 + 57 < 2^16
 #[inline]
 fn encode_scalar(output: &mut Vec<u8>, bytes: &mut Vec<u8>) {
     let mut num_bytes = bytes.len();
     while num_bytes > 0 {
-        let mut carry: u32 = 0;
-        // Prop from low to high (LSB to MSB for BE buf)
-        for byte in bytes.iter_mut().take(num_bytes) {
-            let temp = u32::from(*byte) + carry * 256u32;
-            *byte = (temp / 58) as u8;
-            carry = temp % 58;
+        let mut remainder = 0u32;
+        for i in 0..num_bytes {
+            let temp = remainder * 256u32 + u32::from(bytes[i]);
+            bytes[i] = (temp / 58) as u8;
+            remainder = temp % 58;
         }
-        output.push(VAL_TO_DIGIT[carry as usize]);
-        // Trim leading high zeros (MSB at end)
-        while num_bytes > 0 && bytes[num_bytes - 1] == 0 {
+        output.push(VAL_TO_DIGIT[remainder as usize]);
+        // Trim leading zeros (high at start)
+        while num_bytes > 0 && bytes[0] == 0 {
+            bytes.remove(0);
             num_bytes -= 1;
         }
-        bytes.truncate(num_bytes);
     }
 }
 /// x86 AVX2 SIMD encode: Batch 8 u32 (32 bytes) via intrinsics (256-bit).

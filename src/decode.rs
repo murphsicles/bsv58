@@ -7,10 +7,11 @@
 use crate::ALPHABET;
 use sha2::{Digest, Sha256};
 
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::_mm_loadu_si128;
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::{vget_lane_u8, vld1_u8};
+
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::_mm_loadu_si128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
@@ -75,7 +76,9 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
         #[cfg(target_arch = "x86_64")]
         {
             if digits.len() >= 32 && std::arch::is_x86_feature_detected!("avx2") {
-                unsafe { decode_simd_x86(&mut output, &vals, zeros); }
+                unsafe {
+                    decode_simd_x86(&mut output, &vals, zeros);
+                }
             } else {
                 decode_scalar(&mut output, &vals, zeros);
             }
@@ -83,7 +86,9 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
         #[cfg(target_arch = "aarch64")]
         {
             if digits.len() >= 16 && std::arch::is_aarch64_feature_detected!("neon") {
-                unsafe { decode_simd_arm(&mut output, &vals, zeros); }
+                unsafe {
+                    decode_simd_arm(&mut output, &vals, zeros);
+                }
             } else {
                 decode_scalar(&mut output, &vals, zeros);
             }
@@ -124,7 +129,12 @@ fn decode_scalar(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
 /// ~3.5x scalar.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[target_feature(enable = "avx2")]
-#[allow(unsafe_op_in_unsafe_fn, clippy::cast_ptr_alignment, clippy::ptr_as_ptr, clippy::cast_possible_truncation)]
+#[allow(
+    unsafe_op_in_unsafe_fn,
+    clippy::cast_ptr_alignment,
+    clippy::ptr_as_ptr,
+    clippy::cast_possible_truncation
+)]
 unsafe fn decode_simd_x86(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
     const LANES: usize = 8;
     let mut i = 0;
@@ -147,7 +157,9 @@ unsafe fn decode_simd_x86(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
             let low = acc + carry;
             let mut temp = low;
             for _ in 0..8 {
-                if temp == 0 { break; }
+                if temp == 0 {
+                    break;
+                }
                 output.push((temp % 256) as u8);
                 temp /= 256;
             }
@@ -181,14 +193,19 @@ unsafe fn decode_simd_x86(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
 /// ~3x scalar.
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
 #[target_feature(enable = "neon")]
-#[allow(unsafe_op_in_unsafe_fn, clippy::cast_ptr_alignment, clippy::ptr_as_ptr, clippy::cast_possible_truncation)]
+#[allow(
+    unsafe_op_in_unsafe_fn,
+    clippy::cast_ptr_alignment,
+    clippy::ptr_as_ptr,
+    clippy::cast_possible_truncation
+)]
 unsafe fn decode_simd_arm(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
     const LANES: usize = 4;
     let mut i = 0;
     let mut carry = 0u64;
     while i + LANES <= vals.len() {
         let ptr = vals.as_ptr().add(i);
-        let _batch = vld1_u8(ptr.cast::<_>()); // u8x16, low 4
+        let _batch = vld1_u8(ptr.cast::<_>());
         let mut accs = [0u64; LANES];
         // Unrolled
         accs[0] = accs[0] * 58 + u64::from(vget_lane_u8(_batch, 0));
@@ -200,7 +217,9 @@ unsafe fn decode_simd_arm(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
             let low = acc + carry;
             let mut temp = low;
             for _ in 0..8 {
-                if temp == 0 { break; }
+                if temp == 0 {
+                    break;
+                }
                 output.push((temp % 256) as u8);
                 temp /= 256;
             }
@@ -305,7 +324,8 @@ mod tests {
         let _ = decode("Cn8eVZg");
     }
     #[test]
-    fn simd_correctness() { // Smoke: Roundtrip long
+    fn simd_correctness() {
+        // Smoke: Roundtrip long
         let long = b"hello world bsv58 test payload for simd".repeat(10);
         let enc = crate::encode(long);
         let dec = decode(&enc).unwrap();

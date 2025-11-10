@@ -71,7 +71,7 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
         #[cfg(target_arch = "x86_64")]
         {
             if digits.len() >= 32 && std::arch::is_x86_feature_detected!("avx2") {
-                decode_simd_x86(&mut output, &vals, zeros);
+                unsafe { decode_simd_x86(&mut output, &vals, zeros); }
             } else {
                 decode_scalar(&mut output, &vals, zeros);
             }
@@ -79,7 +79,7 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
         #[cfg(target_arch = "aarch64")]
         {
             if digits.len() >= 16 && std::arch::is_aarch64_feature_detected!("neon") {
-                decode_simd_arm(&mut output, &vals, zeros);
+                unsafe { decode_simd_arm(&mut output, &vals, zeros); }
             } else {
                 decode_scalar(&mut output, &vals, zeros);
             }
@@ -114,6 +114,19 @@ fn decode_scalar(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
 }
 
+/// Extract low u64 from __m256i (unrolled for lanes).
+#[inline]
+unsafe fn extract_low_u64(v: x86_64::__m256i) -> u64 {
+    std::mem::transmute::<x86_64::__m128i, u64>(x86_64::_mm256_castsi256_si128(v))
+}
+
+/// Extract lane u64 from __m256i.
+#[inline]
+unsafe fn extract_lane_u64(v: x86_64::__m256i, lane: usize) -> u64 {
+    let bytes = std::slice::from_raw_parts(std::mem::transmute::<x86_64::__m256i, *const u8>(&v), 32);
+    u64::from_le_bytes([bytes[lane * 8], bytes[lane * 8 + 1], bytes[lane * 8 + 2], bytes[lane * 8 + 3], bytes[lane * 8 + 4], bytes[lane * 8 + 5], bytes[lane * 8 + 6], bytes[lane * 8 + 7]])
+}
+
 /// x86 AVX2 SIMD decode: Batch 8 digits (vector Horner: fused *58 + val).
 /// 256-bit: u8->u64 promote, mul/add chain; extract low bytes + carry. ~4x scalar.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
@@ -125,19 +138,23 @@ unsafe fn decode_simd_x86(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
     let mut carry = 0u64;
     while i + LANES <= vals.len() {
         let ptr = vals.as_ptr().add(i);
-        let batch = _mm256_cvtepu8_epi64(_mm_loadl_epi64(ptr as *const _)); // Promote u8 to u64x4 (low), duplicate for full
         let mut acc = _mm256_setzero_si256();
+        // Unrolled Horner per lane
         for lane in 0..LANES {
-            let val = _mm256_set1_epi64x(i64::from(vals[i + lane]));
-            let temp = _mm256_mullo_epi64(acc, _mm256_set1_epi64x(58)); // *58
-            acc = _mm256_add_epi64(temp, _mm256_set1_epi64x(i64::from(u8::from(val)))); // +val
+            let val = u64::from(vals[i + lane]);
+            let temp = _mm256_mullo_epi64(acc, _mm256_set1_epi64x(58));
+            acc = _mm256_add_epi64(temp, _mm256_set1_epi64x(val as i64));
         }
-        // Extract low 8 bytes (unrolled)
+        // Extract low bytes + carry (unrolled)
         for lane in 0..LANES {
-            let low = _mm256_extract_epi64(acc, lane as i32) as u64 + carry;
-            let bytes = extract_bytes(low, 8); // Helper: low 8 bytes
-            output.extend_from_slice(&bytes);
-            carry = low >> 64; // High carry (rare)
+            let low = extract_lane_u64(acc, lane) + carry;
+            let mut temp = low;
+            for _ in 0..8 { // Max 8 bytes per u64
+                if temp == 0 { break; }
+                output.push((temp % 256) as u8);
+                temp /= 256;
+            }
+            carry = temp;
         }
         i += LANES;
     }
@@ -172,21 +189,26 @@ unsafe fn decode_simd_arm(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
     let mut carry = 0u64;
     while i + LANES <= vals.len() {
         let mut acc = vdupq_n_u64(0);
+        // Unrolled Horner
         for lane in 0..LANES {
             let val = vdupq_n_u64(u64::from(vals[i + lane]));
             let temp = vmulq_n_u64(acc, 58);
             acc = vaddq_u64(temp, val);
         }
-        // Extract low bytes (unrolled)
+        // Extract (unrolled)
         for lane in 0..LANES {
             let low = vgetq_lane_u64(acc, lane as i32) + carry;
-            let bytes = extract_bytes(low, 8);
-            output.extend_from_slice(&bytes);
-            carry = low >> 64;
+            let mut temp = low;
+            for _ in 0..8 {
+                if temp == 0 { break; }
+                output.push((temp % 256) as u8);
+                temp /= 256;
+            }
+            carry = temp;
         }
         i += LANES;
     }
-    // Tail scalar (as above)
+    // Tail scalar
     if i < vals.len() {
         let tail = &vals[i..];
         let mut tail_acc = carry;
@@ -204,17 +226,6 @@ unsafe fn decode_simd_arm(output: &mut Vec<u8>, vals: &[u8], zeros: usize) {
     }
     output.reverse();
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
-}
-
-/// Helper: Extract low N bytes from u64 as [u8;8] (padded 0).
-#[inline]
-fn extract_bytes(mut val: u64, n: usize) -> [u8; 8] {
-    let mut bytes = [0u8; 8];
-    for j in 0..n.min(8) {
-        bytes[j] = (val % 256) as u8;
-        val /= 256;
-    }
-    bytes
 }
 
 fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {

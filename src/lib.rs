@@ -6,31 +6,23 @@
 //! Rust 1.80+ stable. Usage: `cargo add bsv58`; benches via `cargo bench`.
 
 pub const ALPHABET: [u8; 58] = *b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-
 mod decode;
 mod encode;
 mod simd;
-
 #[cfg(feature = "simd")]
 pub use simd::{divmod_batch, horner_batch};
-
 /// Encodes bytes to Base58 string (Bitcoin alphabet, leading zeros as '1's).
 pub use encode::encode;
-
 /// Decodes Base58 string to bytes (Bitcoin alphabet, no checksum).
 pub use decode::decode;
-
 /// Decodes with optional BSV checksum validation (strips on success).
 pub use decode::decode_full;
-
 /// Decode errors.
 pub use decode::DecodeError;
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use hex_literal::hex;
-
     /// BSV test corpus: Addresses (w/checksum), txids, hashes.
     const CORPUS: &[(&[u8], &str)] = &[
         // Empty
@@ -45,10 +37,10 @@ mod tests {
             &hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"),
             "111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY",
         ),
-        // P2PKH address payload (21B: version + hash) → full addr w/checksum
+        // P2PKH address payload (21B: version + hash) → raw Base58
         (
             &hex!("00759d6677091e973b9e9d99f19c68fbf43e3f05f9"),
-            "1BitcoinEaterAddressDontSendf59kuE",
+            "12e3A9pcaDSMffCV3iBuhipLAGczU",
         ),
         // Txid sim (32B)
         (
@@ -56,7 +48,6 @@ mod tests {
             "BtCjvJYNhqehX2sbzvBNrbkCYp2qfc6AepXfK1JGnELw",
         ),
     ];
-
     #[test]
     fn roundtrip_no_checksum() {
         for (bytes, encoded) in CORPUS {
@@ -66,7 +57,6 @@ mod tests {
             assert_eq!(dec, *bytes, "Decode fail: {}", enc);
         }
     }
-
     #[test]
     fn roundtrip_with_checksum() {
         // Only test addrs with checksum (payload < full)
@@ -83,7 +73,6 @@ mod tests {
             assert_eq!(dec, *payload, "Checksum decode fail: {}", addr);
         }
     }
-
     #[test]
     fn invalid_cases() {
         // Invalid char
@@ -103,7 +92,6 @@ mod tests {
             Err(DecodeError::InvalidLength)
         ));
     }
-
     #[test]
     fn simd_smoke() {
         // No panic on dispatch (SIMD if feat/cpu flags)
@@ -112,7 +100,6 @@ mod tests {
         let dec = decode(&enc).unwrap();
         assert_eq!(dec, bytes);
     }
-
     #[test]
     fn large_payload() {
         // 50B pubkey (BSV max): No overflow

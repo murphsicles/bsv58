@@ -38,7 +38,6 @@ jobs:
       run: cargo install cargo-udeps --git https://github.com/est31/cargo-udeps --tag v0.1.60 --force
     - name: Udeps (no unused deps)
       run: cargo +nightly udeps --all-features --all-targets
-
   test:
     name: Test
     needs: check
@@ -52,7 +51,7 @@ jobs:
             target: aarch64-unknown-linux-gnu
           - os: macos-latest
             target: aarch64-apple-darwin
-          - os: windows-latest  # Add Win for cross
+          - os: windows-latest # Add Win for cross
             target: x86_64-pc-windows-msvc
     steps:
     - uses: actions/checkout@v4
@@ -73,23 +72,22 @@ jobs:
       run: cargo build --target ${{ matrix.target }} --all-features --verbose
     - name: Run tests
       run: cargo test --target ${{ matrix.target }} --all-features --verbose
+    - name: Install tarpaulin (Linux only)
+      if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
+      run: cargo install cargo-tarpaulin --version 0.34.1 --locked
     - name: Coverage (Linux only)
       if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
-      uses: actions-rs/tarpaulin@v0.1
-      with:
-        version: '0.34.1'
-        args: --all-features --out Xml
+      run: cargo tarpaulin --all-features --out Xml
     - name: Upload coverage
       if: matrix.os == 'ubuntu-latest' && matrix.target == 'x86_64-unknown-linux-gnu'
       uses: codecov/codecov-action@v4
       with:
-        file: ./target/debug/tarpaulin.xml
-
+        file: ./tarpaulin-report.xml
   bench:
     name: Bench
     needs: test
     runs-on: ubuntu-latest
-    if: github.event_name != 'schedule' || always()  # Run always on cron
+    if: github.event_name != 'schedule' || always() # Run always on cron
     steps:
     - uses: actions/checkout@v4
     - name: Install Rust (stable)
@@ -115,7 +113,6 @@ jobs:
         path: target/criterion/
         retention-days: 30
         compression-level: 6
-
   cross:
     name: Cross-Compile
     needs: test
@@ -134,7 +131,6 @@ jobs:
       uses: Swatinem/rust-cache@v2
     - name: Cross-build (release)
       run: cargo build --target ${{ matrix.target }} --all-features --release --verbose
-
   perf-regression:
     name: Perf Regression
     if: github.event_name == 'schedule'
@@ -143,7 +139,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
       with:
-        fetch-depth: 0  # Git history for baselines
+        fetch-depth: 0 # Git history for baselines
     - name: Install Rust (stable)
       uses: dtolnay/rust-toolchain@stable
       with:
@@ -152,9 +148,9 @@ jobs:
       uses: Swatinem/rust-cache@v2
     - name: Run full benches (JSON for parsing)
       run: cargo bench --all-features --bench bench --message-format json
-    - name: Detect regression (>15% slowdown)
+    - name: Detect regression (>5% slowdown)
       uses: 99si/simple-bench-action@v1
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
-        threshold: 15  # Slightly relaxed for SIMD noise
+        threshold: 5 # Tight for perf-critical
         json: true

@@ -4,21 +4,20 @@
 //! Exports: `encode(&[u8]) -> String`, `decode(&str) -> Result<Vec<u8>, DecodeError>` (no checksum).
 //! For checksum: `decode_full(&str, true)`. SIMD: AVX2 (x86) / NEON (ARM) dispatch; scalar fallback.
 //! Rust 1.80+ stable. Usage: `cargo add bsv58`; benches via `cargo bench`.
-
 pub const ALPHABET: [u8; 58] = *b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 mod decode;
 mod encode;
 mod simd;
-#[cfg(feature = "simd")]
-pub use simd::{divmod_batch, horner_batch};
-/// Encodes bytes to Base58 string (Bitcoin alphabet, leading zeros as '1's).
-pub use encode::encode;
+/// Decode errors.
+pub use decode::DecodeError;
 /// Decodes Base58 string to bytes (Bitcoin alphabet, no checksum).
 pub use decode::decode;
 /// Decodes with optional BSV checksum validation (strips on success).
 pub use decode::decode_full;
-/// Decode errors.
-pub use decode::DecodeError;
+/// Encodes bytes to Base58 string (Bitcoin alphabet, leading zeros as '1's).
+pub use encode::encode;
+#[cfg(feature = "simd")]
+pub use simd::{divmod_batch, horner_batch};
 #[cfg(test)]
 mod tests {
     use super::*;

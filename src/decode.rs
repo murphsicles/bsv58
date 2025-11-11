@@ -5,7 +5,10 @@
 //! Perf: <4c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
 use crate::ALPHABET;
 use sha2::{Digest, Sha256};
+
 #[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::*;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
     /// Invalid character at position.
@@ -15,6 +18,7 @@ pub enum DecodeError {
     /// Payload too short for checksum (needs >=4 bytes).
     InvalidLength,
 }
+
 /// Decodes a Base58 string (Bitcoin alphabet) to bytes (no checksum).
 ///
 /// # Errors
@@ -23,6 +27,7 @@ pub enum DecodeError {
 pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
     decode_full(input, false)
 }
+
 /// Decodes a `Base58Check` string (Bitcoin alphabet) to bytes, optionally validating checksum.
 /// Validates BSV-style checksum if `validate_checksum=true` (default false for raw payloads).
 ///
@@ -87,6 +92,7 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
     }
     finish_decode(output, validate_checksum)
 }
+
 #[allow(clippy::cast_possible_truncation)]
 #[inline]
 fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
@@ -124,6 +130,7 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     output.append(&mut num);
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
 }
+
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[target_feature(enable = "avx2")]
 #[allow(
@@ -135,6 +142,7 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
 unsafe fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     decode_scalar(output, digits, zeros);
 }
+
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
 #[target_feature(enable = "neon")]
 #[allow(
@@ -146,6 +154,7 @@ unsafe fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
 unsafe fn decode_simd_arm(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     decode_scalar(output, digits, zeros);
 }
+
 fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {
     if validate_checksum {
         if output.len() < 4 {
@@ -163,6 +172,7 @@ fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>
     }
     Ok(output)
 }
+
 const DIGIT_TO_VAL: [u8; 128] = {
     let mut table = [255u8; 128];
     let alphabet = &ALPHABET;
@@ -178,10 +188,12 @@ const DIGIT_TO_VAL: [u8; 128] = {
     }
     table
 };
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use hex_literal::hex;
+
     #[test]
     fn decode_known_no_checksum() {
         assert_eq!(decode(""), Ok(vec![]));
@@ -196,6 +208,7 @@ mod tests {
             Err(DecodeError::InvalidChar(4))
         ));
     }
+
     #[test]
     fn decode_with_checksum() {
         let addr = "1BitcoinEaterAddressDontSendf59kuE";
@@ -207,6 +220,7 @@ mod tests {
             Err(DecodeError::Checksum)
         ));
     }
+
     #[test]
     fn decode_length_error() {
         assert!(matches!(
@@ -214,10 +228,12 @@ mod tests {
             Err(DecodeError::InvalidLength)
         ));
     }
+
     #[test]
     fn simd_dispatch() {
         let _ = decode("Cn8eVZg");
     }
+
     #[test]
     fn simd_correctness() {
         // Smoke: Roundtrip long

@@ -327,7 +327,7 @@ mod tests {
     fn simd_correctness() {
         // Smoke: Roundtrip long
         let long = b"hello world bsv58 test payload for simd".repeat(10);
-        let enc = crate::encode(long);
+        let enc = crate::encode(&long);
         let dec = decode(&enc).unwrap();
         assert_eq!(dec, long.to_vec());
     }

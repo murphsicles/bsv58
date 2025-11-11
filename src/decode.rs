@@ -115,7 +115,7 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
                     c /= 256;
                 }
                 break;
-            } else {
+            }
                 pos -= 1;
                 let temp = u64::from(num[pos]) + c;
                 num[pos] = (temp % 256) as u8;

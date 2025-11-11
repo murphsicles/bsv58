@@ -17,7 +17,7 @@ const VAL_TO_DIGIT: [u8; 58] = [
     b'r', b's', b't', b'u', b'v', b'w', b'x', b'y', b'z', // 49-57
 ];
 const BASE: u64 = 58;
-const MAGIC: u64 = 0x3c9ef3a1b8e4a1b8; // Floor(2^64 / 58)
+const MAGIC: u64 = 0x3c9e_f3a1_b8e4_a1b8; // Floor(2^64 / 58)
 const SHIFT: u32 = 64 - 26; // Adjusted for precision
 #[must_use]
 #[inline]
@@ -74,8 +74,8 @@ fn pack_to_limbs(bytes: &[u8]) -> Vec<u64> {
         let end = (i + 8).min(bytes.len());
         let chunk = &bytes[i..end];
         let mut limb = 0u64;
-        for &b in chunk.iter() {
-            limb = (limb << 8) | u64::from(b);
+        for b in &chunk {
+            limb = (limb << 8) | u64::from(*b);
         }
         limbs.push(limb);
         i += 8;
@@ -94,6 +94,7 @@ fn encode_scalar(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
             *limb |= q << 56;
             remainder = temp % BASE;
         }
+        #[allow(clippy::cast_possible_truncation)]
         output.push(VAL_TO_DIGIT[remainder as usize]);
         while num_limbs > 0 && limbs[0] == 0 {
             limbs.remove(0);
@@ -205,10 +206,12 @@ fn encode_scalar_tail(output: &mut Vec<u8>, limbs: &mut [u64], mut carry: u64) {
         let q = div_u64(temp, BASE);
         *limb = (*limb << 8) | (q << 56);
         let rem = temp % BASE;
+        #[allow(clippy::cast_possible_truncation)]
         output.push(VAL_TO_DIGIT[rem as usize]);
         carry = temp / BASE;
     }
     if carry > 0 {
+        #[allow(clippy::cast_possible_truncation)]
         output.push(VAL_TO_DIGIT[(carry % BASE) as usize]);
     }
 }

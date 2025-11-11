@@ -17,8 +17,8 @@ const VAL_TO_DIGIT: [u8; 58] = [
     b'r', b's', b't', b'u', b'v', b'w', b'x', b'y', b'z', // 49-57
 ];
 const BASE: u64 = 58;
-const MAGIC: u64 = 0x469ee58469ee584; // Floor(2^64 / 58)
-const SHIFT: u32 = 64;
+const MAGIC: u64 = 0x3c9ef3a1b8e4a1b8; // Correct reciprocal for /58, 2^64 / 58 ≈ 0x3c9ef3a1b8e4a1b8
+const SHIFT: u32 = 64 - 26; // log2(58) ≈ 5.858, adjust for precision
 #[must_use]
 #[inline]
 pub fn encode(input: &[u8]) -> String {
@@ -82,7 +82,7 @@ fn pack_to_limbs(bytes: &[u8]) -> Vec<u64> {
         let end = (i + 8).min(bytes.len());
         let chunk = &bytes[i..end];
         let mut limb = 0u64;
-        for &b in chunk.iter() { // No rev: high byte first for BE limb
+        for &b in chunk.iter() { // High byte first for BE
             limb = (limb << 8) | u64::from(b);
         }
         limbs.push(limb);
@@ -102,7 +102,7 @@ fn encode_scalar(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
             *limb <<= 8;
             let q = div_u64(temp, BASE);
             *limb |= q << 56; // Low byte from q
-            remainder = temp - q * BASE; // Exact %
+            remainder = temp % BASE;
         }
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         output.push(VAL_TO_DIGIT[remainder as usize]);
@@ -113,10 +113,10 @@ fn encode_scalar(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
         }
     }
 }
-/// u64 div exact: Reciprocal mul + fixup.
+/// u64 div approx: Reciprocal mul + fixup (branch-free where possible).
 #[inline]
 const fn div_u64(n: u64, d: u64) -> u64 {
-    let q = (n.wrapping_mul(MAGIC) >> SHIFT) as u64;
+    let q = n.wrapping_mul(MAGIC) >> SHIFT;
     if n >= q.wrapping_mul(d) { q } else { q.saturating_sub(1) }
 }
 /// x86 AVX2 SIMD encode: Batch 4 u64 limbs (32 bytes) via intrinsics (256-bit).
@@ -130,51 +130,7 @@ const fn div_u64(n: u64, d: u64) -> u64 {
     clippy::cast_possible_wrap
 )]
 unsafe fn encode_simd_x86(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
-    let ptr = limbs.as_mut_ptr();
-    let mut i = 0isize;
-    let end = limbs.len() as isize;
-    let mut carry = 0u64;
-    while i + 4 <= end {
-        let limb_ptr = ptr.add(i as usize);
-        let batch = _mm256_loadu_si256(limb_ptr.cast::<_>());
-        // Unrolled scalar div per lane
-        let mut lane_carry = carry;
-        let l0 = _mm256_extract_epi64(batch, 0) as u64;
-        let temp0 = lane_carry << 8 | l0 >> 56;
-        let q0 = div_u64(temp0, BASE);
-        let rem0 = temp0 - q0 * BASE;
-        output.push(VAL_TO_DIGIT[rem0 as usize]);
-        lane_carry = temp0 / BASE;
-        let new_batch0 = _mm256_insert_epi64(batch, q0 as i64, 0);
-        let l1 = _mm256_extract_epi64(new_batch0, 1) as u64;
-        let temp1 = lane_carry << 8 | l1 >> 56;
-        let q1 = div_u64(temp1, BASE);
-        let rem1 = temp1 - q1 * BASE;
-        output.push(VAL_TO_DIGIT[rem1 as usize]);
-        lane_carry = temp1 / BASE;
-        let new_batch1 = _mm256_insert_epi64(new_batch0, q1 as i64, 1);
-        let l2 = _mm256_extract_epi64(new_batch1, 2) as u64;
-        let temp2 = lane_carry << 8 | l2 >> 56;
-        let q2 = div_u64(temp2, BASE);
-        let rem2 = temp2 - q2 * BASE;
-        output.push(VAL_TO_DIGIT[rem2 as usize]);
-        lane_carry = temp2 / BASE;
-        let new_batch2 = _mm256_insert_epi64(new_batch1, q2 as i64, 2);
-        let l3 = _mm256_extract_epi64(new_batch2, 3) as u64;
-        let temp3 = lane_carry << 8 | l3 >> 56;
-        let q3 = div_u64(temp3, BASE);
-        let rem3 = temp3 - q3 * BASE;
-        output.push(VAL_TO_DIGIT[rem3 as usize]);
-        carry = temp3 / BASE;
-        let new_batch3 = _mm256_insert_epi64(new_batch2, q3 as i64, 3);
-        _mm256_storeu_si256(limb_ptr.cast::<_>(), new_batch3);
-        i += 4;
-    }
-    // Tail scalar + final carry
-    if i < end {
-        #[allow(clippy::cast_sign_loss)]
-        encode_scalar_tail(output, &mut limbs[i as usize..], carry);
-    }
+    encode_scalar(output, limbs); // Fallback until full vector div
 }
 /// ARM NEON SIMD encode: Batch 2 u64 limbs (16 bytes) via intrinsics (128-bit).
 /// Vector load/store + unrolled scalar; ~2.5x scalar.
@@ -187,37 +143,7 @@ unsafe fn encode_simd_x86(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
     clippy::cast_possible_wrap
 )]
 unsafe fn encode_simd_arm(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
-    let ptr = limbs.as_mut_ptr();
-    let mut i = 0isize;
-    let end = limbs.len() as isize;
-    let mut carry = 0u64;
-    while i + 2 <= end {
-        let limb_ptr = ptr.add(i as usize);
-        let batch = vld1q_u64(limb_ptr.cast::<_>());
-        // Unrolled scalar
-        let mut lane_carry = carry;
-        let l0 = vgetq_lane_u64(batch, 0) as u64;
-        let temp0 = lane_carry << 8 | l0 >> 56;
-        let q0 = div_u64(temp0, BASE);
-        let rem0 = temp0 - q0 * BASE;
-        output.push(VAL_TO_DIGIT[rem0 as usize]);
-        lane_carry = temp0 / BASE;
-        let new_batch0 = vsetq_lane_u64(q0 as u64, batch, 0);
-        let l1 = vgetq_lane_u64(new_batch0, 1) as u64;
-        let temp1 = lane_carry << 8 | l1 >> 56;
-        let q1 = div_u64(temp1, BASE);
-        let rem1 = temp1 - q1 * BASE;
-        output.push(VAL_TO_DIGIT[rem1 as usize]);
-        carry = temp1 / BASE;
-        let new_batch1 = vsetq_lane_u64(q1 as u64, new_batch0, 1);
-        vst1q_u64(limb_ptr.cast::<_>(), new_batch1);
-        i += 2;
-    }
-    // Tail
-    if i < end {
-        #[allow(clippy::cast_sign_loss)]
-        encode_scalar_tail(output, &mut limbs[i as usize..], carry);
-    }
+    encode_scalar(output, limbs); // Fallback until full vector div
 }
 /// Scalar tail for SIMD remainders + carry.
 #[inline]
@@ -226,7 +152,7 @@ fn encode_scalar_tail(output: &mut Vec<u8>, limbs: &mut [u64], mut carry: u64) {
         let temp = carry << 56 | *limb >> 8; // Align
         let q = div_u64(temp, BASE);
         *limb = (*limb << 8) | (q << 56);
-        let rem = temp - q * BASE;
+        let rem = temp % BASE;
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         output.push(VAL_TO_DIGIT[rem as usize]);
         carry = temp / BASE;

@@ -16,10 +16,25 @@ pub enum DecodeError {
     /// Payload too short for checksum (needs >=4 bytes).
     InvalidLength,
 }
+/// Decodes a Base58 string (Bitcoin alphabet) to bytes (no checksum).
+///
+/// # Errors
+/// - `InvalidChar(pos)`: Non-alphabet char at `pos`.
 #[inline]
 pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
     decode_full(input, false)
 }
+/// Decodes a `Base58Check` string (Bitcoin alphabet) to bytes, optionally validating checksum.
+/// Validates BSV-style checksum if `validate_checksum=true` (default false for raw payloads).
+///
+/// # Errors
+/// - `InvalidChar(pos)`: Non-alphabet char at `pos`.
+/// - `Checksum`: Double-SHA256 of payload[:-4] != payload[-4:].
+/// - `InvalidLength`: Output <4 bytes (checksum impossible).
+///
+/// # Performance Notes
+/// - Capacity: ~0.733 * input len (log256(58)).
+/// - SIMD: AVX2 (8 digits x86), NEON (4 digits ARM); scalar fallback.
 #[inline]
 pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {
     if input.is_empty() {
@@ -73,6 +88,7 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
     }
     finish_decode(output, validate_checksum)
 }
+#[allow(clippy::cast_possible_truncation)]
 #[inline]
 fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     let mut num: Vec<u8> = Vec::new();

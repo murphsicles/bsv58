@@ -7,8 +7,6 @@ use crate::ALPHABET;
 use sha2::{Digest, Sha256};
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::{vget_lane_u8, vld1_u8};
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::_mm_loadu_si128;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
     /// Invalid character at position.

@@ -2,8 +2,6 @@
 //! Specialized for Bitcoin SV: Bitcoin alphabet, leading zero handling as '1's.
 //! Optimizations: Precomp table for val->digit, unsafe zero-copy reverse (~15% faster).
 //! Perf: <5c/byte scalar (unrolled carry sum); branch-free where possible.
-use crate::ALPHABET;
-
 const VAL_TO_DIGIT: [u8; 58] = *b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 #[must_use]

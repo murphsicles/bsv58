@@ -7,7 +7,10 @@
 use std::arch::aarch64::{vgetq_lane_u64, vld1q_u64, vsetq_lane_u64, vst1q_u64};
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    _mm256_extract_epi64, _mm256_insert_epi64, _mm256_loadu_si256, _mm256_storeu_si256,
+    _mm256_extract_epi64,
+    _mm256_insert_epi64,
+    _mm256_loadu_si256,
+    _mm256_storeu_si256,
 };
 
 const VAL_TO_DIGIT: [u8; 58] = [
@@ -21,8 +24,7 @@ const VAL_TO_DIGIT: [u8; 58] = [
 ];
 
 const BASE: u64 = 58;
-const MAGIC: u64 = 0x3c9e_f3a1_b8e4_a1b8; // Floor(2^64 / 58)
-const SHIFT: u32 = 64 - 26; // Adjusted for precision
+const MAGIC: u64 = 0x469e_e584_69ee_584; // Floor(2^64 / 58)
 
 #[must_use]
 #[inline]
@@ -115,9 +117,9 @@ fn encode_scalar(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
 }
 
 #[inline]
-const fn div_u64(n: u64, d: u64) -> u64 {
-    let q = n.wrapping_mul(MAGIC) >> SHIFT;
-    if n >= q.wrapping_mul(d) {
+const fn div_u64(n: u64, _d: u64) -> u64 {
+    let q = ((n as u128 * MAGIC as u128) >> 64) as u64;
+    if n >= q.wrapping_mul(BASE) {
         q
     } else {
         q.saturating_sub(1)

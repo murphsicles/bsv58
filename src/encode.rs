@@ -6,12 +6,7 @@
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::{vgetq_lane_u64, vld1q_u64, vsetq_lane_u64, vst1q_u64};
 #[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{
-    _mm256_extract_epi64,
-    _mm256_insert_epi64,
-    _mm256_loadu_si256,
-    _mm256_storeu_si256,
-};
+use std::arch::x86_64::{_mm256_extract_epi64, _mm256_insert_epi64, _mm256_loadu_si256, _mm256_storeu_si256};
 
 const VAL_TO_DIGIT: [u8; 58] = [
     b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', // 0-8

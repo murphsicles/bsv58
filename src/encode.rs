@@ -3,13 +3,10 @@
 //! Optimizations: Precomp table for val->digit, unsafe zero-copy reverse (~15% faster),
 //! arch-specific SIMD intrinsics (AVX2/NEON ~4x arith speedup), u64 scalar fallback.
 //! Perf: <5c/byte on AVX2 (unrolled magic mul div, fused carry sum); branch-free where possible.
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::{_mm256_extract_epi64, _mm256_insert_epi64, _mm256_loadu_si256, _mm256_storeu_si256};
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::{vgetq_lane_u64, vld1q_u64, vsetq_lane_u64, vst1q_u64};
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{
-    _mm256_extract_epi64, _mm256_insert_epi64, _mm256_loadu_si256, _mm256_storeu_si256,
-};
-
 const VAL_TO_DIGIT: [u8; 58] = [
     b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', // 0-8
     b'A', b'B', b'C', b'D', b'E', b'F', b'G', b'H', // 9-16
@@ -19,11 +16,9 @@ const VAL_TO_DIGIT: [u8; 58] = [
     b'i', b'j', b'k', b'm', b'n', b'o', b'p', b'q', // 41-48
     b'r', b's', b't', b'u', b'v', b'w', b'x', b'y', b'z', // 49-57
 ];
-
 const BASE: u64 = 58;
-const MAGIC: u64 = 0xaaaa_aaab; // Floor(2^64 / 58) for reciprocal mul div
-const SHIFT: u32 = 64 - 6; // log2(58) ≈6
-
+const MAGIC: u64 = 0x469ee58469ee584; // Floor(2^64 / 58)
+const SHIFT: u32 = 64;
 #[must_use]
 #[inline]
 pub fn encode(input: &[u8]) -> String {
@@ -53,9 +48,7 @@ pub fn encode(input: &[u8]) -> String {
         #[cfg(target_arch = "x86_64")]
         {
             if non_zero_len >= 32 && std::arch::is_x86_feature_detected!("avx2") {
-                unsafe {
-                    encode_simd_x86(&mut output, &mut limbs);
-                }
+                unsafe { encode_simd_x86(&mut output, &mut limbs); }
             } else {
                 encode_scalar(&mut output, &mut limbs);
             }
@@ -63,9 +56,7 @@ pub fn encode(input: &[u8]) -> String {
         #[cfg(target_arch = "aarch64")]
         {
             if non_zero_len >= 16 && std::arch::is_aarch64_feature_detected!("neon") {
-                unsafe {
-                    encode_simd_arm(&mut output, &mut limbs);
-                }
+                unsafe { encode_simd_arm(&mut output, &mut limbs); }
             } else {
                 encode_scalar(&mut output, &mut limbs);
             }
@@ -82,7 +73,6 @@ pub fn encode(input: &[u8]) -> String {
     // To String: Unchecked UTF-8 (all chars ASCII 0x21-0x7A, valid)
     unsafe { String::from_utf8_unchecked(output) }
 }
-
 /// Pack bytes to u64 limbs (big-endian: high limb first).
 #[inline]
 fn pack_to_limbs(bytes: &[u8]) -> Vec<u64> {
@@ -92,8 +82,7 @@ fn pack_to_limbs(bytes: &[u8]) -> Vec<u64> {
         let end = (i + 8).min(bytes.len());
         let chunk = &bytes[i..end];
         let mut limb = 0u64;
-        for &b in chunk.iter().rev() {
-            // Low byte first in u64
+        for &b in chunk.iter() { // No rev: high byte first for BE limb
             limb = (limb << 8) | u64::from(b);
         }
         limbs.push(limb);
@@ -101,7 +90,6 @@ fn pack_to_limbs(bytes: &[u8]) -> Vec<u64> {
     }
     limbs
 }
-
 /// Scalar fallback: Big-endian div-by-58 (high-to-low rem prop); digits low-first.
 /// u64 limbs for ~2x wider arith (less loops). Optimizer unrolls naturally.
 #[inline]
@@ -114,10 +102,7 @@ fn encode_scalar(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
             *limb <<= 8;
             let q = div_u64(temp, BASE);
             *limb |= q << 56; // Low byte from q
-            remainder = temp.wrapping_mul(MAGIC) >> SHIFT; // Approx %58; exact via adjust
-            if remainder >= BASE {
-                remainder -= BASE;
-            }
+            remainder = temp - q * BASE; // Exact %
         }
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         output.push(VAL_TO_DIGIT[remainder as usize]);
@@ -128,18 +113,12 @@ fn encode_scalar(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
         }
     }
 }
-
-/// u64 div approx: Reciprocal mul + fixup (branch-free where possible).
+/// u64 div exact: Reciprocal mul + fixup.
 #[inline]
 const fn div_u64(n: u64, d: u64) -> u64 {
-    let q = n.wrapping_mul(MAGIC) >> SHIFT;
-    if n >= q.wrapping_mul(d) {
-        q
-    } else {
-        q.saturating_sub(1)
-    }
+    let q = (n.wrapping_mul(MAGIC) >> SHIFT) as u64;
+    if n >= q.wrapping_mul(d) { q } else { q.saturating_sub(1) }
 }
-
 /// x86 AVX2 SIMD encode: Batch 4 u64 limbs (32 bytes) via intrinsics (256-bit).
 /// Vector load/store + unrolled scalar div per lane; ~3x scalar on long.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
@@ -163,28 +142,28 @@ unsafe fn encode_simd_x86(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
         let l0 = _mm256_extract_epi64(batch, 0) as u64;
         let temp0 = lane_carry << 8 | l0 >> 56;
         let q0 = div_u64(temp0, BASE);
-        let rem0 = temp0 % BASE;
+        let rem0 = temp0 - q0 * BASE;
         output.push(VAL_TO_DIGIT[rem0 as usize]);
         lane_carry = temp0 / BASE;
         let new_batch0 = _mm256_insert_epi64(batch, q0 as i64, 0);
         let l1 = _mm256_extract_epi64(new_batch0, 1) as u64;
         let temp1 = lane_carry << 8 | l1 >> 56;
         let q1 = div_u64(temp1, BASE);
-        let rem1 = temp1 % BASE;
+        let rem1 = temp1 - q1 * BASE;
         output.push(VAL_TO_DIGIT[rem1 as usize]);
         lane_carry = temp1 / BASE;
         let new_batch1 = _mm256_insert_epi64(new_batch0, q1 as i64, 1);
         let l2 = _mm256_extract_epi64(new_batch1, 2) as u64;
         let temp2 = lane_carry << 8 | l2 >> 56;
         let q2 = div_u64(temp2, BASE);
-        let rem2 = temp2 % BASE;
+        let rem2 = temp2 - q2 * BASE;
         output.push(VAL_TO_DIGIT[rem2 as usize]);
         lane_carry = temp2 / BASE;
         let new_batch2 = _mm256_insert_epi64(new_batch1, q2 as i64, 2);
         let l3 = _mm256_extract_epi64(new_batch2, 3) as u64;
         let temp3 = lane_carry << 8 | l3 >> 56;
         let q3 = div_u64(temp3, BASE);
-        let rem3 = temp3 % BASE;
+        let rem3 = temp3 - q3 * BASE;
         output.push(VAL_TO_DIGIT[rem3 as usize]);
         carry = temp3 / BASE;
         let new_batch3 = _mm256_insert_epi64(new_batch2, q3 as i64, 3);
@@ -197,7 +176,6 @@ unsafe fn encode_simd_x86(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
         encode_scalar_tail(output, &mut limbs[i as usize..], carry);
     }
 }
-
 /// ARM NEON SIMD encode: Batch 2 u64 limbs (16 bytes) via intrinsics (128-bit).
 /// Vector load/store + unrolled scalar; ~2.5x scalar.
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
@@ -221,14 +199,14 @@ unsafe fn encode_simd_arm(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
         let l0 = vgetq_lane_u64(batch, 0) as u64;
         let temp0 = lane_carry << 8 | l0 >> 56;
         let q0 = div_u64(temp0, BASE);
-        let rem0 = temp0 % BASE;
+        let rem0 = temp0 - q0 * BASE;
         output.push(VAL_TO_DIGIT[rem0 as usize]);
         lane_carry = temp0 / BASE;
         let new_batch0 = vsetq_lane_u64(q0 as u64, batch, 0);
         let l1 = vgetq_lane_u64(new_batch0, 1) as u64;
         let temp1 = lane_carry << 8 | l1 >> 56;
         let q1 = div_u64(temp1, BASE);
-        let rem1 = temp1 % BASE;
+        let rem1 = temp1 - q1 * BASE;
         output.push(VAL_TO_DIGIT[rem1 as usize]);
         carry = temp1 / BASE;
         let new_batch1 = vsetq_lane_u64(q1 as u64, new_batch0, 1);
@@ -241,7 +219,6 @@ unsafe fn encode_simd_arm(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
         encode_scalar_tail(output, &mut limbs[i as usize..], carry);
     }
 }
-
 /// Scalar tail for SIMD remainders + carry.
 #[inline]
 fn encode_scalar_tail(output: &mut Vec<u8>, limbs: &mut [u64], mut carry: u64) {
@@ -249,7 +226,7 @@ fn encode_scalar_tail(output: &mut Vec<u8>, limbs: &mut [u64], mut carry: u64) {
         let temp = carry << 56 | *limb >> 8; // Align
         let q = div_u64(temp, BASE);
         *limb = (*limb << 8) | (q << 56);
-        let rem = temp % BASE;
+        let rem = temp - q * BASE;
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         output.push(VAL_TO_DIGIT[rem as usize]);
         carry = temp / BASE;
@@ -259,12 +236,10 @@ fn encode_scalar_tail(output: &mut Vec<u8>, limbs: &mut [u64], mut carry: u64) {
         output.push(VAL_TO_DIGIT[(carry % BASE) as usize]);
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use hex_literal::hex;
-
     #[test]
     fn encode_known_no_zeros() {
         assert_eq!(encode(b""), "");
@@ -275,7 +250,6 @@ mod tests {
             "BtCjvJYNhqehX2sbzvBNrbkCYp2qfc6AepXfK1JGnELw"
         );
     }
-
     #[test]
     fn encode_with_zeros() {
         assert_eq!(encode(&hex!("00")), "1");
@@ -286,22 +260,18 @@ mod tests {
             "111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY"
         );
     }
-
     #[test]
     fn encode_large() {
         let large = vec![0u8; 50];
         let encoded = encode(&large);
         assert_eq!(encoded, "1".repeat(50));
     }
-
     #[test]
     fn simd_dispatch() {
         let _ = encode(b"hello");
     }
-
     #[test]
     fn simd_correctness() {
-        // Smoke: Roundtrip long batch
         let long = vec![42u8; 64];
         let enc = encode(&long);
         let dec = crate::decode(&enc).unwrap();

@@ -105,17 +105,20 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
             num.insert(0, (carry % 256) as u8);
             carry /= 256;
         }
-        // Add val to low end (LSB, end of BE array)
+        // Add val to low end (end of vector for BE)
         let mut c = u64::from(val);
-        let mut i = num.len();
+        let mut pos = num.len();
         while c > 0 {
-            if i == 0 {
-                num.insert(0, (c % 256) as u8);
-                c /= 256;
+            if pos == 0 {
+                while c > 0 {
+                    num.insert(0, (c % 256) as u8);
+                    c /= 256;
+                }
+                break;
             } else {
-                i -= 1;
-                let temp = u64::from(num[i]) + c;
-                num[i] = (temp % 256) as u8;
+                pos -= 1;
+                let temp = u64::from(num[pos]) + c;
+                num[pos] = (temp % 256) as u8;
                 c = temp / 256;
             }
         }

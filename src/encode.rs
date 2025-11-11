@@ -3,10 +3,16 @@
 //! Optimizations: Precomp table for val->digit, unsafe zero-copy reverse (~15% faster),
 //! arch-specific SIMD intrinsics (AVX2/NEON ~4x arith speedup), u64 scalar fallback.
 //! Perf: <5c/byte on AVX2 (unrolled magic mul div, fused carry sum); branch-free where possible.
-#[cfg(target_arch = "x86_64")]
-use std::arch::x86_64::{_mm256_extract_epi64, _mm256_insert_epi64, _mm256_loadu_si256, _mm256_storeu_si256};
 #[cfg(target_arch = "aarch64")]
 use std::arch::aarch64::{vgetq_lane_u64, vld1q_u64, vsetq_lane_u64, vst1q_u64};
+#[cfg(target_arch = "x86_64")]
+use std::arch::x86_64::{
+    _mm256_extract_epi64,
+    _mm256_insert_epi64,
+    _mm256_loadu_si256,
+    _mm256_storeu_si256,
+};
+
 const VAL_TO_DIGIT: [u8; 58] = [
     b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', // 0-8
     b'A', b'B', b'C', b'D', b'E', b'F', b'G', b'H', // 9-16
@@ -16,9 +22,11 @@ const VAL_TO_DIGIT: [u8; 58] = [
     b'i', b'j', b'k', b'm', b'n', b'o', b'p', b'q', // 41-48
     b'r', b's', b't', b'u', b'v', b'w', b'x', b'y', b'z', // 49-57
 ];
+
 const BASE: u64 = 58;
 const MAGIC: u64 = 0x3c9e_f3a1_b8e4_a1b8; // Floor(2^64 / 58)
 const SHIFT: u32 = 64 - 26; // Adjusted for precision
+
 #[must_use]
 #[inline]
 pub fn encode(input: &[u8]) -> String {
@@ -44,7 +52,9 @@ pub fn encode(input: &[u8]) -> String {
         #[cfg(target_arch = "x86_64")]
         {
             if non_zero_len >= 32 && std::arch::is_x86_feature_detected!("avx2") {
-                unsafe { encode_simd_x86(&mut output, &mut limbs); }
+                unsafe {
+                    encode_simd_x86(&mut output, &mut limbs);
+                }
             } else {
                 encode_scalar(&mut output, &mut limbs);
             }
@@ -52,7 +62,9 @@ pub fn encode(input: &[u8]) -> String {
         #[cfg(target_arch = "aarch64")]
         {
             if non_zero_len >= 16 && std::arch::is_aarch64_feature_detected!("neon") {
-                unsafe { encode_simd_arm(&mut output, &mut limbs); }
+                unsafe {
+                    encode_simd_arm(&mut output, &mut limbs);
+                }
             } else {
                 encode_scalar(&mut output, &mut limbs);
             }
@@ -66,6 +78,7 @@ pub fn encode(input: &[u8]) -> String {
     output.splice(0..0, std::iter::repeat_n(b'1', zeros));
     unsafe { String::from_utf8_unchecked(output) }
 }
+
 #[inline]
 fn pack_to_limbs(bytes: &[u8]) -> Vec<u64> {
     let mut limbs = Vec::with_capacity(bytes.len().div_ceil(8));
@@ -82,6 +95,7 @@ fn pack_to_limbs(bytes: &[u8]) -> Vec<u64> {
     }
     limbs
 }
+
 #[inline]
 fn encode_scalar(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
     let mut num_limbs = limbs.len();
@@ -102,11 +116,17 @@ fn encode_scalar(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
         }
     }
 }
+
 #[inline]
 const fn div_u64(n: u64, d: u64) -> u64 {
     let q = n.wrapping_mul(MAGIC) >> SHIFT;
-    if n >= q.wrapping_mul(d) { q } else { q.saturating_sub(1) }
+    if n >= q.wrapping_mul(d) {
+        q
+    } else {
+        q.saturating_sub(1)
+    }
 }
+
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[target_feature(enable = "avx2")]
 #[allow(
@@ -160,6 +180,7 @@ unsafe fn encode_simd_x86(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
         encode_scalar_tail(output, &mut limbs[i as usize..], carry);
     }
 }
+
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
 #[target_feature(enable = "neon")]
 #[allow(
@@ -199,6 +220,7 @@ unsafe fn encode_simd_arm(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
         encode_scalar_tail(output, &mut limbs[i as usize..], carry);
     }
 }
+
 #[inline]
 fn encode_scalar_tail(output: &mut Vec<u8>, limbs: &mut [u64], mut carry: u64) {
     for limb in limbs.iter_mut() {
@@ -215,10 +237,12 @@ fn encode_scalar_tail(output: &mut Vec<u8>, limbs: &mut [u64], mut carry: u64) {
         output.push(VAL_TO_DIGIT[(carry % BASE) as usize]);
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use hex_literal::hex;
+
     #[test]
     fn encode_known_no_zeros() {
         assert_eq!(encode(b""), "");
@@ -229,6 +253,7 @@ mod tests {
             "BtCjvJYNhqehX2sbzvBNrbkCYp2qfc6AepXfK1JGnELw"
         );
     }
+
     #[test]
     fn encode_with_zeros() {
         assert_eq!(encode(&hex!("00")), "1");
@@ -239,16 +264,19 @@ mod tests {
             "111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY"
         );
     }
+
     #[test]
     fn encode_large() {
         let large = vec![0u8; 50];
         let encoded = encode(&large);
         assert_eq!(encoded, "1".repeat(50));
     }
+
     #[test]
     fn simd_dispatch() {
         let _ = encode(b"hello");
     }
+
     #[test]
     fn simd_correctness() {
         let long = vec![42u8; 64];

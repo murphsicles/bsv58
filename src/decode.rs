@@ -5,8 +5,6 @@
 //! Perf: <4c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
 use crate::ALPHABET;
 use sha2::{Digest, Sha256};
-#[cfg(target_arch = "aarch64")]
-use std::arch::aarch64::{vget_lane_u8, vld1_u8};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
     /// Invalid character at position.

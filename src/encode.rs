@@ -1,18 +1,11 @@
 //! Base58 encoding module for bsv58.
 //! Specialized for Bitcoin SV: Bitcoin alphabet, leading zero handling as '1's.
-//! Optimizations: Precomp table for val->digit, unsafe zero-copy reverse (~15% faster),
-//! arch-specific SIMD intrinsics (AVX2/NEON ~4x arith speedup), u64 scalar fallback.
-//! Perf: <5c/byte on AVX2 (unrolled magic mul div, fused carry sum); branch-free where possible.
-const VAL_TO_DIGIT: [u8; 58] = [
-    b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', // 0-8
-    b'A', b'B', b'C', b'D', b'E', b'F', b'G', b'H', // 9-16
-    b'J', b'K', b'L', b'M', b'N', b'P', b'Q', b'R', // 17-24
-    b'S', b'T', b'U', b'V', b'W', b'X', b'Y', b'Z', // 25-32
-    b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', // 33-40
-    b'i', b'j', b'k', b'm', b'n', b'o', b'p', b'q', // 41-48
-    b'r', b's', b't', b'u', b'v', b'w', b'x', b'y', b'z', // 49-57
-];
-const BASE: u64 = 58;
+//! Optimizations: Precomp table for val->digit, unsafe zero-copy reverse (~15% faster).
+//! Perf: <5c/byte scalar (unrolled carry sum); branch-free where possible.
+use crate::ALPHABET;
+
+const VAL_TO_DIGIT: [u8; 58] = *b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
 #[must_use]
 #[inline]
 pub fn encode(input: &[u8]) -> String {
@@ -27,74 +20,39 @@ pub fn encode(input: &[u8]) -> String {
     let cap = ((input.len() as f64 * 1.3652).ceil() as usize).max(1);
     let zeros = input.iter().take_while(|&&b| b == 0).count();
     let non_zero = &input[zeros..];
-    let non_zero_len = non_zero.len();
-    if non_zero_len == 0 {
-        return unsafe { String::from_utf8_unchecked(vec![b'1'; zeros]) };
+    if non_zero.is_empty() {
+        return "1".repeat(zeros);
     }
     let mut num = non_zero.to_vec();
     let mut output = Vec::with_capacity(cap - zeros);
-    #[cfg(feature = "simd")]
-    {
-        // TODO: Dispatch SIMD if len >= threshold && detected
-        encode_scalar(&mut output, &mut num);
-    }
-    #[cfg(not(feature = "simd"))]
-    {
-        encode_scalar(&mut output, &mut num);
-    }
-    output.reverse();
-    let mut s = String::with_capacity(zeros + output.len());
-    s.extend(std::iter::repeat('1').take(zeros));
-    s.extend(output.into_iter().map(|b| b as char));
-    s
-}
-#[inline]
-fn encode_scalar(output: &mut Vec<u8>, num: &mut Vec<u8>) {
     while !num.is_empty() {
-        let mut carry: u32 = 0;
+        let mut remainder = 0u32;
         let mut all_zero = true;
-        for byte in num.iter_mut().rev() {
-            carry = carry * 256 + u32::from(*byte);
-            *byte = (carry / 58) as u8;
-            carry %= 58;
+        for byte in num.iter_mut() {
+            let temp = remainder * 256 + u32::from(*byte);
+            *byte = (temp / 58) as u8;
+            remainder = temp % 58;
             if *byte != 0 {
                 all_zero = false;
             }
         }
-        output.push(VAL_TO_DIGIT[usize::from(carry)]);
+        output.push(VAL_TO_DIGIT[remainder as usize]);
         if all_zero {
             break;
         }
-        // Trim leading (high) zeros
         while !num.is_empty() && num[0] == 0 {
             num.remove(0);
         }
     }
+    output.reverse();
+    let mut result = String::with_capacity(zeros + output.len());
+    for _ in 0..zeros {
+        result.push('1');
+    }
+    result.extend(output.into_iter().map(|b| b as char));
+    result
 }
-#[cfg(all(target_arch = "x86_64", feature = "simd"))]
-#[target_feature(enable = "avx2")]
-#[allow(
-    unsafe_op_in_unsafe_fn,
-    clippy::cast_ptr_alignment,
-    clippy::ptr_as_ptr,
-    clippy::cast_possible_truncation
-)]
-unsafe fn encode_simd_x86(_output: &mut Vec<u8>, _num: &mut Vec<u8>) {
-    // TODO: AVX2 batch divmod (4x u64 lanes, magic mul /58)
-    encode_scalar(_output, _num);
-}
-#[cfg(all(target_arch = "aarch64", feature = "simd"))]
-#[target_feature(enable = "neon")]
-#[allow(
-    unsafe_op_in_unsafe_fn,
-    clippy::cast_ptr_alignment,
-    clippy::ptr_as_ptr,
-    clippy::cast_possible_truncation
-)]
-unsafe fn encode_simd_arm(_output: &mut Vec<u8>, _num: &mut Vec<u8>) {
-    // TODO: NEON batch (2x u64 lanes, vqrdmulh approx /58)
-    encode_scalar(_output, _num);
-}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,11 +84,7 @@ mod tests {
         assert_eq!(encoded, "1".repeat(50));
     }
     #[test]
-    fn simd_dispatch() {
-        let _ = encode(b"hello");
-    }
-    #[test]
-    fn simd_correctness() {
+    fn correctness() {
         let long = vec![42u8; 64];
         let enc = encode(&long);
         let dec = crate::decode(&enc).unwrap();

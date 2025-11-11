@@ -17,15 +17,14 @@ const VAL_TO_DIGIT: [u8; 58] = [
     b'r', b's', b't', b'u', b'v', b'w', b'x', b'y', b'z', // 49-57
 ];
 const BASE: u64 = 58;
-const MAGIC: u64 = 0x3c9ef3a1b8e4a1b8; // Correct reciprocal for /58, 2^64 / 58 ≈ 0x3c9ef3a1b8e4a1b8
-const SHIFT: u32 = 64 - 26; // log2(58) ≈ 5.858, adjust for precision
+const MAGIC: u64 = 0x3c9ef3a1b8e4a1b8; // Floor(2^64 / 58)
+const SHIFT: u32 = 64 - 26; // Adjusted for precision
 #[must_use]
 #[inline]
 pub fn encode(input: &[u8]) -> String {
     if input.is_empty() {
         return String::new();
     }
-    // Capacity heuristic: log(256)/log(58) ≈1.3652, +1 safety
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
@@ -33,16 +32,13 @@ pub fn encode(input: &[u8]) -> String {
     )]
     let cap = ((input.len() as f64 * 1.3652).ceil() as usize).max(1);
     let mut output = Vec::with_capacity(cap);
-    // Count leading zero bytes (map to leading '1's)
     let zeros = input.iter().take_while(|&&b| b == 0).count();
     let non_zero = &input[zeros..];
     let non_zero_len = non_zero.len();
     if non_zero_len == 0 {
         return unsafe { String::from_utf8_unchecked(vec![b'1'; zeros]) };
     }
-    // Pack non_zero to u64 limbs (big-endian)
     let mut limbs = pack_to_limbs(non_zero);
-    // Dispatch SIMD or scalar
     #[cfg(feature = "simd")]
     {
         #[cfg(target_arch = "x86_64")]
@@ -66,14 +62,10 @@ pub fn encode(input: &[u8]) -> String {
     {
         encode_scalar(&mut output, &mut limbs);
     }
-    // Digits pushed low-first; reverse to MSB-first
     output.reverse();
-    // Prepend leading '1's for zeros
     output.splice(0..0, std::iter::repeat_n(b'1', zeros));
-    // To String: Unchecked UTF-8 (all chars ASCII 0x21-0x7A, valid)
     unsafe { String::from_utf8_unchecked(output) }
 }
-/// Pack bytes to u64 limbs (big-endian: high limb first).
 #[inline]
 fn pack_to_limbs(bytes: &[u8]) -> Vec<u64> {
     let mut limbs = Vec::with_capacity(bytes.len().div_ceil(8));
@@ -82,7 +74,7 @@ fn pack_to_limbs(bytes: &[u8]) -> Vec<u64> {
         let end = (i + 8).min(bytes.len());
         let chunk = &bytes[i..end];
         let mut limb = 0u64;
-        for &b in chunk.iter() { // High byte first for BE
+        for &b in chunk.iter() {
             limb = (limb << 8) | u64::from(b);
         }
         limbs.push(limb);
@@ -90,37 +82,30 @@ fn pack_to_limbs(bytes: &[u8]) -> Vec<u64> {
     }
     limbs
 }
-/// Scalar fallback: Big-endian div-by-58 (high-to-low rem prop); digits low-first.
-/// u64 limbs for ~2x wider arith (less loops). Optimizer unrolls naturally.
 #[inline]
 fn encode_scalar(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
     let mut num_limbs = limbs.len();
     while num_limbs > 0 {
         let mut remainder = 0u64;
         for limb in limbs.iter_mut().take(num_limbs) {
-            let temp = remainder << 8 | *limb >> 56; // High byte to low
+            let temp = remainder << 8 | *limb >> 56;
             *limb <<= 8;
             let q = div_u64(temp, BASE);
-            *limb |= q << 56; // Low byte from q
+            *limb |= q << 56;
             remainder = temp % BASE;
         }
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         output.push(VAL_TO_DIGIT[remainder as usize]);
-        // Trim leading zero limbs
         while num_limbs > 0 && limbs[0] == 0 {
             limbs.remove(0);
             num_limbs -= 1;
         }
     }
 }
-/// u64 div approx: Reciprocal mul + fixup (branch-free where possible).
 #[inline]
 const fn div_u64(n: u64, d: u64) -> u64 {
     let q = n.wrapping_mul(MAGIC) >> SHIFT;
     if n >= q.wrapping_mul(d) { q } else { q.saturating_sub(1) }
 }
-/// x86 AVX2 SIMD encode: Batch 4 u64 limbs (32 bytes) via intrinsics (256-bit).
-/// Vector load/store + unrolled scalar div per lane; ~3x scalar on long.
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[target_feature(enable = "avx2")]
 #[allow(
@@ -130,10 +115,50 @@ const fn div_u64(n: u64, d: u64) -> u64 {
     clippy::cast_possible_wrap
 )]
 unsafe fn encode_simd_x86(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
-    encode_scalar(output, limbs); // Fallback until full vector div
+    let ptr = limbs.as_mut_ptr();
+    let mut i = 0isize;
+    let end = limbs.len() as isize;
+    let mut carry = 0u64;
+    while i + 4 <= end {
+        let limb_ptr = ptr.add(i as usize);
+        let batch = _mm256_loadu_si256(limb_ptr.cast::<_>());
+        let mut lane_carry = carry;
+        let l0 = _mm256_extract_epi64(batch, 0) as u64;
+        let temp0 = lane_carry << 8 | l0 >> 56;
+        let q0 = div_u64(temp0, BASE);
+        let rem0 = temp0 % BASE;
+        output.push(VAL_TO_DIGIT[rem0 as usize]);
+        lane_carry = temp0 / BASE;
+        let new_batch0 = _mm256_insert_epi64(batch, q0 as i64, 0);
+        let l1 = _mm256_extract_epi64(new_batch0, 1) as u64;
+        let temp1 = lane_carry << 8 | l1 >> 56;
+        let q1 = div_u64(temp1, BASE);
+        let rem1 = temp1 % BASE;
+        output.push(VAL_TO_DIGIT[rem1 as usize]);
+        lane_carry = temp1 / BASE;
+        let new_batch1 = _mm256_insert_epi64(new_batch0, q1 as i64, 1);
+        let l2 = _mm256_extract_epi64(new_batch1, 2) as u64;
+        let temp2 = lane_carry << 8 | l2 >> 56;
+        let q2 = div_u64(temp2, BASE);
+        let rem2 = temp2 % BASE;
+        output.push(VAL_TO_DIGIT[rem2 as usize]);
+        lane_carry = temp2 / BASE;
+        let new_batch2 = _mm256_insert_epi64(new_batch1, q2 as i64, 2);
+        let l3 = _mm256_extract_epi64(new_batch2, 3) as u64;
+        let temp3 = lane_carry << 8 | l3 >> 56;
+        let q3 = div_u64(temp3, BASE);
+        let rem3 = temp3 % BASE;
+        output.push(VAL_TO_DIGIT[rem3 as usize]);
+        carry = temp3 / BASE;
+        let new_batch3 = _mm256_insert_epi64(new_batch2, q3 as i64, 3);
+        _mm256_storeu_si256(limb_ptr.cast::<_>(), new_batch3);
+        i += 4;
+    }
+    if i < end {
+        #[allow(clippy::cast_sign_loss)]
+        encode_scalar_tail(output, &mut limbs[i as usize..], carry);
+    }
 }
-/// ARM NEON SIMD encode: Batch 2 u64 limbs (16 bytes) via intrinsics (128-bit).
-/// Vector load/store + unrolled scalar; ~2.5x scalar.
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
 #[target_feature(enable = "neon")]
 #[allow(
@@ -143,22 +168,47 @@ unsafe fn encode_simd_x86(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
     clippy::cast_possible_wrap
 )]
 unsafe fn encode_simd_arm(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
-    encode_scalar(output, limbs); // Fallback until full vector div
+    let ptr = limbs.as_mut_ptr();
+    let mut i = 0isize;
+    let end = limbs.len() as isize;
+    let mut carry = 0u64;
+    while i + 2 <= end {
+        let limb_ptr = ptr.add(i as usize);
+        let batch = vld1q_u64(limb_ptr.cast::<_>());
+        let mut lane_carry = carry;
+        let l0 = vgetq_lane_u64(batch, 0) as u64;
+        let temp0 = lane_carry << 8 | l0 >> 56;
+        let q0 = div_u64(temp0, BASE);
+        let rem0 = temp0 % BASE;
+        output.push(VAL_TO_DIGIT[rem0 as usize]);
+        lane_carry = temp0 / BASE;
+        let new_batch0 = vsetq_lane_u64(q0 as u64, batch, 0);
+        let l1 = vgetq_lane_u64(new_batch0, 1) as u64;
+        let temp1 = lane_carry << 8 | l1 >> 56;
+        let q1 = div_u64(temp1, BASE);
+        let rem1 = temp1 % BASE;
+        output.push(VAL_TO_DIGIT[rem1 as usize]);
+        carry = temp1 / BASE;
+        let new_batch1 = vsetq_lane_u64(q1 as u64, new_batch0, 1);
+        vst1q_u64(limb_ptr.cast::<_>(), new_batch1);
+        i += 2;
+    }
+    if i < end {
+        #[allow(clippy::cast_sign_loss)]
+        encode_scalar_tail(output, &mut limbs[i as usize..], carry);
+    }
 }
-/// Scalar tail for SIMD remainders + carry.
 #[inline]
 fn encode_scalar_tail(output: &mut Vec<u8>, limbs: &mut [u64], mut carry: u64) {
     for limb in limbs.iter_mut() {
-        let temp = carry << 56 | *limb >> 8; // Align
+        let temp = carry << 56 | *limb >> 8;
         let q = div_u64(temp, BASE);
         *limb = (*limb << 8) | (q << 56);
         let rem = temp % BASE;
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         output.push(VAL_TO_DIGIT[rem as usize]);
         carry = temp / BASE;
     }
     if carry > 0 {
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         output.push(VAL_TO_DIGIT[(carry % BASE) as usize]);
     }
 }

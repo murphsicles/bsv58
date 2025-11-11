@@ -74,7 +74,7 @@ fn pack_to_limbs(bytes: &[u8]) -> Vec<u64> {
         let end = (i + 8).min(bytes.len());
         let chunk = &bytes[i..end];
         let mut limb = 0u64;
-        for b in &chunk {
+        for b in chunk {
             limb = (limb << 8) | u64::from(*b);
         }
         limbs.push(limb);

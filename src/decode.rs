@@ -6,9 +6,6 @@
 use crate::ALPHABET;
 use sha2::{Digest, Sha256};
 
-#[cfg(target_arch = "aarch64")]
-use std::arch::aarch64::*;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
     /// Invalid character at position.

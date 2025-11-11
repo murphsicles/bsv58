@@ -2,6 +2,7 @@
 //! Specialized for Bitcoin SV: Bitcoin alphabet, leading zero handling as '1's.
 //! Optimizations: Precomp table for val->digit, unsafe zero-copy reverse (~15% faster).
 //! Perf: <5c/byte scalar (unrolled carry sum); branch-free where possible.
+
 const VAL_TO_DIGIT: [u8; 58] = *b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 #[must_use]
@@ -26,7 +27,8 @@ pub fn encode(input: &[u8]) -> String {
     while !num.is_empty() {
         let mut remainder = 0u32;
         let mut all_zero = true;
-        for byte in num.iter_mut() {
+        #[allow(clippy::explicit_iter_loop, clippy::cast_possible_truncation)]
+        for byte in &mut num {
             let temp = remainder * 256 + u32::from(*byte);
             *byte = (temp / 58) as u8;
             remainder = temp % 58;

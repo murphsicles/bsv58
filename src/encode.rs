@@ -24,7 +24,6 @@ const VAL_TO_DIGIT: [u8; 58] = [
 ];
 
 const BASE: u64 = 58;
-const MAGIC: u64 = 0x469e_e584_69ee_584; // Floor(2^64 / 58)
 
 #[must_use]
 #[inline]
@@ -103,7 +102,7 @@ fn encode_scalar(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
         for limb in limbs.iter_mut().take(num_limbs) {
             let temp = remainder << 8 | *limb >> 56;
             *limb <<= 8;
-            let q = div_u64(temp, BASE);
+            let q = temp / BASE;
             *limb |= q << 56;
             remainder = temp % BASE;
         }
@@ -113,16 +112,6 @@ fn encode_scalar(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
             limbs.remove(0);
             num_limbs -= 1;
         }
-    }
-}
-
-#[inline]
-const fn div_u64(n: u64, _d: u64) -> u64 {
-    let q = ((n as u128 * MAGIC as u128) >> 64) as u64;
-    if n >= q.wrapping_mul(BASE) {
-        q
-    } else {
-        q.saturating_sub(1)
     }
 }
 
@@ -145,28 +134,28 @@ unsafe fn encode_simd_x86(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
         let mut lane_carry = carry;
         let l0 = _mm256_extract_epi64(batch, 0) as u64;
         let temp0 = lane_carry << 8 | l0 >> 56;
-        let q0 = div_u64(temp0, BASE);
+        let q0 = temp0 / BASE;
         let rem0 = temp0 % BASE;
         output.push(VAL_TO_DIGIT[rem0 as usize]);
         lane_carry = temp0 / BASE;
         let new_batch0 = _mm256_insert_epi64(batch, q0 as i64, 0);
         let l1 = _mm256_extract_epi64(new_batch0, 1) as u64;
         let temp1 = lane_carry << 8 | l1 >> 56;
-        let q1 = div_u64(temp1, BASE);
+        let q1 = temp1 / BASE;
         let rem1 = temp1 % BASE;
         output.push(VAL_TO_DIGIT[rem1 as usize]);
         lane_carry = temp1 / BASE;
         let new_batch1 = _mm256_insert_epi64(new_batch0, q1 as i64, 1);
         let l2 = _mm256_extract_epi64(new_batch1, 2) as u64;
         let temp2 = lane_carry << 8 | l2 >> 56;
-        let q2 = div_u64(temp2, BASE);
+        let q2 = temp2 / BASE;
         let rem2 = temp2 % BASE;
         output.push(VAL_TO_DIGIT[rem2 as usize]);
         lane_carry = temp2 / BASE;
         let new_batch2 = _mm256_insert_epi64(new_batch1, q2 as i64, 2);
         let l3 = _mm256_extract_epi64(new_batch2, 3) as u64;
         let temp3 = lane_carry << 8 | l3 >> 56;
-        let q3 = div_u64(temp3, BASE);
+        let q3 = temp3 / BASE;
         let rem3 = temp3 % BASE;
         output.push(VAL_TO_DIGIT[rem3 as usize]);
         carry = temp3 / BASE;
@@ -199,14 +188,14 @@ unsafe fn encode_simd_arm(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
         let mut lane_carry = carry;
         let l0 = vgetq_lane_u64(batch, 0) as u64;
         let temp0 = lane_carry << 8 | l0 >> 56;
-        let q0 = div_u64(temp0, BASE);
+        let q0 = temp0 / BASE;
         let rem0 = temp0 % BASE;
         output.push(VAL_TO_DIGIT[rem0 as usize]);
         lane_carry = temp0 / BASE;
         let new_batch0 = vsetq_lane_u64(q0 as u64, batch, 0);
         let l1 = vgetq_lane_u64(new_batch0, 1) as u64;
         let temp1 = lane_carry << 8 | l1 >> 56;
-        let q1 = div_u64(temp1, BASE);
+        let q1 = temp1 / BASE;
         let rem1 = temp1 % BASE;
         output.push(VAL_TO_DIGIT[rem1 as usize]);
         carry = temp1 / BASE;
@@ -224,7 +213,7 @@ unsafe fn encode_simd_arm(output: &mut Vec<u8>, limbs: &mut Vec<u64>) {
 fn encode_scalar_tail(output: &mut Vec<u8>, limbs: &mut [u64], mut carry: u64) {
     for limb in limbs.iter_mut() {
         let temp = carry << 56 | *limb >> 8;
-        let q = div_u64(temp, BASE);
+        let q = temp / BASE;
         *limb = (*limb << 8) | (q << 56);
         let rem = temp % BASE;
         #[allow(clippy::cast_possible_truncation)]

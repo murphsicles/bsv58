@@ -5,6 +5,8 @@
 //! Perf: <4c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
 use crate::ALPHABET;
 use sha2::{Digest, Sha256};
+#[cfg(target_arch = "aarch64")]
+use std::arch::aarch64::{vget_lane_u8, vld1_u8};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
     /// Invalid character at position.
@@ -92,6 +94,7 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     let mut num: Vec<u8> = Vec::new();
     for &ch in digits {
         let val = DIGIT_TO_VAL[ch as usize];
+        // Multiply current num by 58 (BE, low to high via rev)
         let mut carry = 0u64;
         for b in num.iter_mut().rev() {
             let temp = u64::from(*b) * 58 + carry;
@@ -102,15 +105,18 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
             num.insert(0, (carry % 256) as u8);
             carry /= 256;
         }
-        if num.is_empty() {
-            num.push(val);
-        } else {
-            let mut c = u64::from(val) + u64::from(num[0]);
-            num[0] = (c % 256) as u8;
-            c /= 256;
-            while c > 0 {
+        // Add val to low end (LSB, end of BE array)
+        let mut c = u64::from(val);
+        let mut i = num.len();
+        while c > 0 {
+            if i == 0 {
                 num.insert(0, (c % 256) as u8);
                 c /= 256;
+            } else {
+                i -= 1;
+                let temp = u64::from(num[i]) + c;
+                num[i] = (temp % 256) as u8;
+                c = temp / 256;
             }
         }
     }
@@ -183,6 +189,7 @@ mod tests {
         let encoded = "111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY";
         let genesis = hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f");
         assert_eq!(decode(encoded), Ok(genesis.to_vec()));
+        // Invalid char
         assert!(matches!(
             decode("invalid!"),
             Err(DecodeError::InvalidChar(4))
@@ -212,6 +219,7 @@ mod tests {
     }
     #[test]
     fn simd_correctness() {
+        // Smoke: Roundtrip long
         let long = b"hello world bsv58 test payload for simd".repeat(10);
         let enc = crate::encode(&long);
         let dec = decode(&enc).unwrap();

@@ -1,10 +1,8 @@
 //! Base58 encoding module for bsv58.
 //! Specialized for Bitcoin SV: Bitcoin alphabet, leading zero handling as '1's.
-//! Optimizations: Precomp table for val->digit, unsafe zero-copy reverse (~15% faster).
+//! Optimizations: u32 limbs (BE) for 4x fewer ops in div loop; unsafe zero-copy reverse (~15% faster).
 //! Perf: <5c/byte scalar (unrolled carry sum); branch-free where possible.
-
-const VAL_TO_DIGIT: [u8; 58] = *b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
-
+use crate::ALPHABET as VAL_TO_DIGIT;
 #[must_use]
 #[inline]
 pub fn encode(input: &[u8]) -> String {
@@ -22,17 +20,30 @@ pub fn encode(input: &[u8]) -> String {
     if non_zero.is_empty() {
         return "1".repeat(zeros);
     }
-    let mut num = non_zero.to_vec();
+    // Pack to u32 BE limbs (high limb first)
+    let mut num: Vec<u32> = Vec::with_capacity((non_zero.len() + 3) / 4);
+    let mut idx = 0;
+    while idx < non_zero.len() {
+        let mut limb: u32 = 0;
+        let mut shift = 24i32;
+        for _ in 0..4 {
+            if idx < non_zero.len() {
+                limb |= u32::from(non_zero[idx]) << shift as u32;
+                idx += 1;
+            }
+            shift = (shift - 8).max(0);
+        }
+        num.push(limb);
+    }
     let mut output = Vec::with_capacity(cap - zeros);
-    while !num.is_empty() {
+    loop {
         let mut remainder = 0u32;
         let mut all_zero = true;
-        #[allow(clippy::explicit_iter_loop, clippy::cast_possible_truncation)]
-        for byte in &mut num {
-            let temp = remainder * 256 + u32::from(*byte);
-            *byte = (temp / 58) as u8;
-            remainder = temp % 58;
-            if *byte != 0 {
+        for limb in &mut num {
+            let temp = (u64::from(remainder) << 32) + u64::from(*limb);
+            *limb = (temp / 58) as u32;
+            remainder = (temp % 58) as u32;
+            if *limb != 0 {
                 all_zero = false;
             }
         }
@@ -40,6 +51,7 @@ pub fn encode(input: &[u8]) -> String {
         if all_zero {
             break;
         }
+        // Trim leading zero limbs
         while !num.is_empty() && num[0] == 0 {
             num.remove(0);
         }
@@ -52,7 +64,6 @@ pub fn encode(input: &[u8]) -> String {
     result.extend(output.into_iter().map(|b| b as char));
     result
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -89,5 +100,13 @@ mod tests {
         let enc = encode(&long);
         let dec = crate::decode(&enc).unwrap();
         assert_eq!(dec, long);
+    }
+    #[test]
+    fn wide_limbs_correctness() {
+        // Smoke large
+        let large = vec![42u8; 1024];
+        let enc = encode(&large);
+        let dec = crate::decode(&enc).unwrap();
+        assert_eq!(dec, large);
     }
 }

@@ -21,7 +21,7 @@ pub fn encode(input: &[u8]) -> String {
         return "1".repeat(zeros);
     }
     // Pack to u32 LE limbs (low limb first)
-    let mut num: Vec<u32> = Vec::with_capacity((non_zero.len() + 3) / 4);
+    let mut num: Vec<u32> = Vec::with_capacity(non_zero.len().div_ceil(4));
     let mut idx = 0;
     while idx < non_zero.len() {
         let mut limb: u32 = 0;
@@ -45,6 +45,7 @@ pub fn encode(input: &[u8]) -> String {
         let mut all_zero = true;
         for limb in &mut num {
             let temp = u64::from(remainder) * base_limb + u64::from(*limb);
+            #[allow(clippy::cast_possible_truncation)]
             *limb = (temp / 58) as u32;
             remainder = (temp % 58) as u32;
             if *limb != 0 {
@@ -56,7 +57,7 @@ pub fn encode(input: &[u8]) -> String {
             break;
         }
         // Trim leading zero limbs (high end)
-        while let Some(&0) = num.last() {
+        while num.last() == Some(&0) {
             num.pop();
         }
         if num.is_empty() {

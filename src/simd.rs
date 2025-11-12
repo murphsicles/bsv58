@@ -24,8 +24,7 @@ mod dispatch {
         #[cfg(target_arch = "x86_64")]
         {
             if N == 8 && std::arch::is_x86_feature_detected!("avx2") {
-                let vec8: [u32; 8] = vec;
-                let (q, r) = unsafe { avx2_divmod_batch(vec8) };
+                let (q, r) = unsafe { avx2_divmod_batch(vec) };
                 quot.copy_from_slice(&q);
                 rem.copy_from_slice(&r);
                 return (quot, rem);
@@ -34,8 +33,7 @@ mod dispatch {
         #[cfg(target_arch = "aarch64")]
         {
             if N == 4 && std::arch::is_aarch64_feature_detected!("neon") {
-                let vec4: [u32; 4] = vec;
-                let (q, r) = unsafe { neon_divmod_batch(vec4) };
+                let (q, r) = unsafe { neon_divmod_batch(vec) };
                 quot.copy_from_slice(&q);
                 rem.copy_from_slice(&r);
                 return (quot, rem);

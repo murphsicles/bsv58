@@ -8,11 +8,6 @@
 pub use self::dispatch::{divmod_batch, horner_batch};
 #[cfg(feature = "simd")]
 mod dispatch {
-    #[cfg(target_arch = "x86_64")]
-    use std::arch::x86_64::{
-        _mm_extract_epi32, _mm_loadu_si128, _mm_mul_epu32, _mm_set1_epi32, _mm_srli_epi32,
-        _mm_srli_epi64, __m128i,
-    };
     #[cfg(target_arch = "aarch64")]
     use std::arch::aarch64::{vdupq_n_u32, vget_high_u32, vget_low_u32, vgetq_lane_u32, vld1q_u32, vmull_u32, vshrq_n_u32, vshrq_n_u64, vreinterpretq_u32_u64};
     const BASE: u32 = 58;
@@ -21,19 +16,6 @@ mod dispatch {
     /// Unrolled divmod: Array / BASE -> quot, % BASE -> rem (u8).
     #[must_use]
     pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {
-        #[cfg(target_arch = "x86_64")]
-        {
-            if N == 8 && std::arch::is_x86_feature_detected!("avx2") {
-                let mut vec8 = [0u32; 8];
-                vec8.copy_from_slice(&vec);
-                let (q8, r8) = unsafe { avx2_divmod_batch(vec8) };
-                let mut quot = [0u32; N];
-                quot.copy_from_slice(&q8);
-                let mut rem = [0u8; N];
-                rem.copy_from_slice(&r8);
-                return (quot, rem);
-            }
-        }
         #[cfg(target_arch = "aarch64")]
         {
             if N == 4 && std::arch::is_aarch64_feature_detected!("neon") {
@@ -57,33 +39,6 @@ mod dispatch {
         }
         (quot, rem)
     }
-    #[cfg(target_arch = "x86_64")]
-    #[target_feature(enable = "avx2")]
-    #[allow(unsafe_op_in_unsafe_fn)]
-    unsafe fn avx2_divmod_batch(vec: [u32; 8]) -> ([u32; 8], [u8; 8]) {
-        let mut quot = [0u32; 8];
-        let mut rem = [0u8; 8];
-        // Unrolled for 4 pairs (AVX2 via 128-bit loads)
-        macro_rules! process_pair {
-            ($idx:expr, $ptr_offset:expr) => {{
-                let v_ptr = vec.as_ptr().add($idx).cast::<__m128i>();
-                let v = _mm_loadu_si128(v_ptr);
-                let m = _mm_set1_epi32(M_U32 as i32);
-                let mul = _mm_mul_epu32(v, m.cast::<__m128i>());
-                let high = _mm_srli_epi64(mul, 32);
-                let q = _mm_srli_epi32(high, P_U32);
-                quot[$idx] = _mm_extract_epi32(q, 0) as u32;
-                quot[$idx + 1] = _mm_extract_epi32(q, 2) as u32;
-                rem[$idx] = (vec[$idx].wrapping_sub(quot[$idx].wrapping_mul(BASE))) as u8;
-                rem[$idx + 1] = (vec[$idx + 1].wrapping_sub(quot[$idx + 1].wrapping_mul(BASE))) as u8;
-            }};
-        }
-        process_pair!(0, 0);
-        process_pair!(2, 2);
-        process_pair!(4, 4);
-        process_pair!(6, 6);
-        (quot, rem)
-    }
     #[cfg(target_arch = "aarch64")]
     #[target_feature(enable = "neon")]
     #[allow(unsafe_op_in_unsafe_fn)]
@@ -99,7 +54,7 @@ mod dispatch {
         let high_low = vshrq_n_u64(mul_low, 32);
         let q_low = vshrq_n_u32(vreinterpretq_u32_u64(high_low), P_U32 as u32);
         quot[0] = vgetq_lane_u32(q_low, 0);
-        quot[1] = vgetq_lane_u32(q_low, 1);
+        quot[1] = vgetq_lane_u32(q_low, 2);
         rem[0] = (vec[0].wrapping_sub(quot[0].wrapping_mul(BASE))) as u8;
         rem[1] = (vec[1].wrapping_sub(quot[1].wrapping_mul(BASE))) as u8;
         // High pair
@@ -109,7 +64,7 @@ mod dispatch {
         let high_high = vshrq_n_u64(mul_high, 32);
         let q_high = vshrq_n_u32(vreinterpretq_u32_u64(high_high), P_U32 as u32);
         quot[2] = vgetq_lane_u32(q_high, 0);
-        quot[3] = vgetq_lane_u32(q_high, 1);
+        quot[3] = vgetq_lane_u32(q_high, 2);
         rem[2] = (vec[2].wrapping_sub(quot[2].wrapping_mul(BASE))) as u8;
         rem[3] = (vec[3].wrapping_sub(quot[3].wrapping_mul(BASE))) as u8;
         (quot, rem)

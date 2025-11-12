@@ -35,6 +35,7 @@ mod dispatch {
             let v = vec[lane];
             let hi = ((u64::from(v) * u64::from(M_U32)) >> 32) >> (P_U32 as u64);
             quot[lane] = hi as u32;
+            #[allow(clippy::cast_possible_truncation)]
             rem[lane] = (v.wrapping_sub(quot[lane].wrapping_mul(BASE))) as u8;
         }
         (quot, rem)
@@ -55,7 +56,9 @@ mod dispatch {
         let q_low = vshrq_n_u32(vreinterpretq_u32_u64(high_low), P_U32 as u32);
         quot[0] = vgetq_lane_u32(q_low, 0);
         quot[1] = vgetq_lane_u32(q_low, 2);
+        #[allow(clippy::cast_possible_truncation)]
         rem[0] = (vec[0].wrapping_sub(quot[0].wrapping_mul(BASE))) as u8;
+        #[allow(clippy::cast_possible_truncation)]
         rem[1] = (vec[1].wrapping_sub(quot[1].wrapping_mul(BASE))) as u8;
         // High pair
         let high_v = vget_high_u32(v);
@@ -65,7 +68,9 @@ mod dispatch {
         let q_high = vshrq_n_u32(vreinterpretq_u32_u64(high_high), P_U32 as u32);
         quot[2] = vgetq_lane_u32(q_high, 0);
         quot[3] = vgetq_lane_u32(q_high, 2);
+        #[allow(clippy::cast_possible_truncation)]
         rem[2] = (vec[2].wrapping_sub(quot[2].wrapping_mul(BASE))) as u8;
+        #[allow(clippy::cast_possible_truncation)]
         rem[3] = (vec[3].wrapping_sub(quot[3].wrapping_mul(BASE))) as u8;
         (quot, rem)
     }

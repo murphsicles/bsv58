@@ -33,7 +33,9 @@ fn samples() -> Vec<(Vec<u8>, String)> {
         ),
     ];
     let large = vec![
-        (1024usize, || (0..1024).map(|i| (i % 256) as u8).collect::<Vec<u8>>()),
+        (1024usize, || {
+            (0..1024).map(|i| (i % 256) as u8).collect::<Vec<u8>>()
+        }),
         (1_048_576usize, || {
             (0..1_048_576).map(|i| (i % 256) as u8).collect::<Vec<u8>>()
         }), // 1MB

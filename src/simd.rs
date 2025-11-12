@@ -9,15 +9,17 @@ pub use self::dispatch::{divmod_batch, horner_batch};
 
 #[cfg(feature = "simd")]
 mod dispatch {
-    use std::arch::x86_64::*;
+    #[cfg(target_arch = "x86_64")]
+    use std::arch::x86_64::{_mm_extract_epi32, _mm_loadu_si128, _mm_mul_epu32, _mm_set1_epi32, _mm_srli_epi32, _mm_srli_epi64, __m128i};
     #[cfg(target_arch = "aarch64")]
-    use std::arch::aarch64::*;
+    use std::arch::aarch64::{vdupq_n_u32, vget_high_u32, vget_low_u32, vgetq_lane_u32, vld1q_u32, vmull_u32, vshrq_n_u32, vshrq_n_u64, vreinterpretq_u32_u64};
 
     const BASE: u32 = 58;
     const M_U32: u32 = 74_051_161;
-    const P_U32: i32 = 0;
+    const P_U32: i32 = 6;
 
     /// Unrolled divmod: Array / BASE -> quot, % BASE -> rem (u8).
+    #[must_use]
     pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {
         #[cfg(target_arch = "x86_64")]
         {
@@ -49,8 +51,9 @@ mod dispatch {
         let mut rem = [0u8; N];
         for lane in 0..N {
             let v = vec[lane];
-            let hi = ((v as u64 * M_U32 as u64) >> 32) >> P_U32 as u64;
+            let hi = ((u64::from(v) * u64::from(M_U32)) >> 32) >> u64::from(P_U32);
             quot[lane] = hi as u32;
+            #[allow(clippy::cast_possible_truncation)]
             rem[lane] = (v.wrapping_sub(quot[lane].wrapping_mul(BASE))) as u8;
         }
         (quot, rem)
@@ -58,56 +61,64 @@ mod dispatch {
 
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
-    #[allow(unsafe_op_in_unsafe_fn)]
+    #[allow(unsafe_op_in_unsafe_fn, clippy::pedantic)]
     unsafe fn avx2_divmod_batch(vec: [u32; 8]) -> ([u32; 8], [u8; 8]) {
         let mut quot = [0u32; 8];
         let mut rem = [0u8; 8];
 
         // Pairs 0-1
-        let v0 = _mm_loadu_si128(vec.as_ptr() as *const __m128i);
-        let m0 = _mm_set1_epi32(M_U32 as i32);
+        let v0 = _mm_loadu_si128(vec.as_ptr().cast::<__m128i>());
+        let m0 = _mm_set1_epi32(i32::from(M_U32));
         let mul0 = _mm_mul_epu32(v0, m0);
         let high0 = _mm_srli_epi64(mul0, 32);
-        let q0 = _mm_srli_epi32(high0, P_U32 as i32);
+        let q0 = _mm_srli_epi32(high0, P_U32);
         quot[0] = _mm_extract_epi32(q0, 0) as u32;
         quot[1] = _mm_extract_epi32(q0, 2) as u32;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         rem[0] = (vec[0].wrapping_sub(quot[0].wrapping_mul(BASE))) as u8;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         rem[1] = (vec[1].wrapping_sub(quot[1].wrapping_mul(BASE))) as u8;
 
         // Pairs 2-3
-        let v1_ptr = vec.as_ptr().add(2) as *const __m128i;
+        let v1_ptr = vec.as_ptr().add(2).cast::<__m128i>();
         let v1 = _mm_loadu_si128(v1_ptr);
-        let m1 = _mm_set1_epi32(M_U32 as i32);
+        let m1 = _mm_set1_epi32(i32::from(M_U32));
         let mul1 = _mm_mul_epu32(v1, m1);
         let high1 = _mm_srli_epi64(mul1, 32);
-        let q1 = _mm_srli_epi32(high1, P_U32 as i32);
+        let q1 = _mm_srli_epi32(high1, P_U32);
         quot[2] = _mm_extract_epi32(q1, 0) as u32;
         quot[3] = _mm_extract_epi32(q1, 2) as u32;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         rem[2] = (vec[2].wrapping_sub(quot[2].wrapping_mul(BASE))) as u8;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         rem[3] = (vec[3].wrapping_sub(quot[3].wrapping_mul(BASE))) as u8;
 
         // Pairs 4-5
-        let v2_ptr = vec.as_ptr().add(4) as *const __m128i;
+        let v2_ptr = vec.as_ptr().add(4).cast::<__m128i>();
         let v2 = _mm_loadu_si128(v2_ptr);
-        let m2 = _mm_set1_epi32(M_U32 as i32);
+        let m2 = _mm_set1_epi32(i32::from(M_U32));
         let mul2 = _mm_mul_epu32(v2, m2);
         let high2 = _mm_srli_epi64(mul2, 32);
-        let q2 = _mm_srli_epi32(high2, P_U32 as i32);
+        let q2 = _mm_srli_epi32(high2, P_U32);
         quot[4] = _mm_extract_epi32(q2, 0) as u32;
         quot[5] = _mm_extract_epi32(q2, 2) as u32;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         rem[4] = (vec[4].wrapping_sub(quot[4].wrapping_mul(BASE))) as u8;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         rem[5] = (vec[5].wrapping_sub(quot[5].wrapping_mul(BASE))) as u8;
 
         // Pairs 6-7
-        let v3_ptr = vec.as_ptr().add(6) as *const __m128i;
+        let v3_ptr = vec.as_ptr().add(6).cast::<__m128i>();
         let v3 = _mm_loadu_si128(v3_ptr);
-        let m3 = _mm_set1_epi32(M_U32 as i32);
+        let m3 = _mm_set1_epi32(i32::from(M_U32));
         let mul3 = _mm_mul_epu32(v3, m3);
         let high3 = _mm_srli_epi64(mul3, 32);
-        let q3 = _mm_srli_epi32(high3, P_U32 as i32);
+        let q3 = _mm_srli_epi32(high3, P_U32);
         quot[6] = _mm_extract_epi32(q3, 0) as u32;
         quot[7] = _mm_extract_epi32(q3, 2) as u32;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         rem[6] = (vec[6].wrapping_sub(quot[6].wrapping_mul(BASE))) as u8;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         rem[7] = (vec[7].wrapping_sub(quot[7].wrapping_mul(BASE))) as u8;
 
         (quot, rem)
@@ -115,7 +126,7 @@ mod dispatch {
 
     #[cfg(target_arch = "aarch64")]
     #[target_feature(enable = "neon")]
-    #[allow(unsafe_op_in_unsafe_fn)]
+    #[allow(unsafe_op_in_unsafe_fn, clippy::pedantic)]
     unsafe fn neon_divmod_batch(vec: [u32; 4]) -> ([u32; 4], [u8; 4]) {
         let mut quot = [0u32; 4];
         let mut rem = [0u8; 4];
@@ -132,7 +143,9 @@ mod dispatch {
         let q_low = vshrq_n_u32(high_u32_low, P_U32 as u32);
         quot[0] = vgetq_lane_u32(q_low, 0);
         quot[1] = vgetq_lane_u32(q_low, 2);
+        #[allow(clippy::cast_possible_truncation)]
         rem[0] = (vec[0].wrapping_sub(quot[0].wrapping_mul(BASE))) as u8;
+        #[allow(clippy::cast_possible_truncation)]
         rem[1] = (vec[1].wrapping_sub(quot[1].wrapping_mul(BASE))) as u8;
 
         // High pair (2-3)
@@ -144,13 +157,16 @@ mod dispatch {
         let q_high = vshrq_n_u32(high_u32_high, P_U32 as u32);
         quot[2] = vgetq_lane_u32(q_high, 0);
         quot[3] = vgetq_lane_u32(q_high, 2);
+        #[allow(clippy::cast_possible_truncation)]
         rem[2] = (vec[2].wrapping_sub(quot[2].wrapping_mul(BASE))) as u8;
+        #[allow(clippy::cast_possible_truncation)]
         rem[3] = (vec[3].wrapping_sub(quot[3].wrapping_mul(BASE))) as u8;
 
         (quot, rem)
     }
 
     /// Horner for decode: batch sum (acc * BASE + val * `BASEⁱ`) but per-lane.
+    #[must_use]
     pub fn horner_batch<const N: usize>(vals: [u8; N], powers: &[u64; N]) -> u64 {
         let mut acc: u64 = 0;
         for i in 0..N {

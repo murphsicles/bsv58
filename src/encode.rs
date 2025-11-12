@@ -5,6 +5,7 @@
 use crate::ALPHABET;
 #[must_use]
 #[inline]
+#[allow(clippy::cast_possible_truncation)]
 pub fn encode(input: &[u8]) -> String {
     if input.is_empty() {
         return String::new();
@@ -45,7 +46,6 @@ pub fn encode(input: &[u8]) -> String {
         let mut all_zero = true;
         for limb in &mut num {
             let temp = u64::from(remainder) * base_limb + u64::from(*limb);
-            #[allow(clippy::cast_possible_truncation)]
             *limb = (temp / 58) as u32;
             remainder = (temp % 58) as u32;
             if *limb != 0 {

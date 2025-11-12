@@ -6,7 +6,7 @@
 use base58::{FromBase58, ToBase58};
 use bs58::{decode as bs58_decode, encode as bs58_encode};
 use bsv58::{decode, decode_full, encode};
-use criterion::{black_box, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use hex_literal::hex;
 use std::time::Duration;
 
@@ -33,12 +33,17 @@ fn samples() -> Vec<(Vec<u8>, String)> {
     ];
     let large = vec![
         (1024usize, || (0..1024).map(|i| (i % 256) as u8).collect()),
-        (1_048_576usize, || (0..1_048_576).map(|i| (i % 256) as u8).collect()), // 1MB
-    ].into_iter().map(|(sz, r#gen)| {
+        (1_048_576usize, || {
+            (0..1_048_576).map(|i| (i % 256) as u8).collect()
+        }), // 1MB
+    ]
+    .into_iter()
+    .map(|(sz, r#gen)| {
         let bytes = r#gen();
         let encoded = encode(&bytes);
         (bytes, encoded)
-    }).collect::<Vec<_>>();
+    })
+    .collect::<Vec<_>>();
     small.into_iter().chain(large).collect()
 }
 
@@ -50,7 +55,9 @@ fn checksum_addrs() -> Vec<&'static str> {
 /// Encode: Groups by input bytes.
 fn bench_encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode");
-    group.sample_size(200).measurement_time(Duration::from_secs(2));
+    group
+        .sample_size(200)
+        .measurement_time(Duration::from_secs(2));
     for (bytes, _) in samples() {
         let size = bytes.len();
         group.throughput(Throughput::Bytes(size as u64));
@@ -71,7 +78,9 @@ fn bench_encode(c: &mut Criterion) {
 /// Decode raw: Groups by input chars; throughput approx bytes out (~0.73 * chars).
 fn bench_decode(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode");
-    group.sample_size(200).measurement_time(Duration::from_secs(2));
+    group
+        .sample_size(200)
+        .measurement_time(Duration::from_secs(2));
     for (_, encoded) in samples() {
         let size = encoded.len();
         let out_bytes = (size as f64 * 0.733).ceil() as u64;
@@ -93,7 +102,9 @@ fn bench_decode(c: &mut Criterion) {
 /// Decode checksum: bsv58 only (sha2); small only (noisy).
 fn bench_decode_checksum(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode_checksum");
-    group.sample_size(100).measurement_time(Duration::from_secs(1));
+    group
+        .sample_size(100)
+        .measurement_time(Duration::from_secs(1));
     for addr in checksum_addrs() {
         let size = addr.len();
         let out_bytes = 21u64; // Fixed payload
@@ -109,7 +120,9 @@ fn bench_decode_checksum(c: &mut Criterion) {
 /// Roundtrip: encode+decode raw; throughput bytes in.
 fn bench_roundtrip(c: &mut Criterion) {
     let mut group = c.benchmark_group("roundtrip");
-    group.sample_size(200).measurement_time(Duration::from_secs(2));
+    group
+        .sample_size(200)
+        .measurement_time(Duration::from_secs(2));
     for (bytes, encoded) in samples() {
         let size = bytes.len();
         group.throughput(Throughput::Bytes(size as u64));
@@ -137,5 +150,11 @@ fn bench_roundtrip(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_encode, bench_decode, bench_decode_checksum, bench_roundtrip);
+criterion_group!(
+    benches,
+    bench_encode,
+    bench_decode,
+    bench_decode_checksum,
+    bench_roundtrip
+);
 criterion_main!(benches);

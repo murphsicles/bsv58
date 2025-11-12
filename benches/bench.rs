@@ -32,21 +32,14 @@ fn samples() -> Vec<(Vec<u8>, String)> {
             "111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY".to_string(),
         ),
     ];
-    let large = vec![
-        (1024usize, || {
-            (0..1024).map(|i| (i % 256) as u8).collect::<Vec<u8>>()
-        }),
-        (1_048_576usize, || {
-            (0..1_048_576).map(|i| (i % 256) as u8).collect::<Vec<u8>>()
-        }), // 1MB
-    ]
-    .into_iter()
-    .map(|(sz, r#gen)| {
-        let bytes = r#gen();
-        let encoded = encode(&bytes);
-        (bytes, encoded)
-    })
-    .collect::<Vec<_>>();
+    let large = vec![1024usize, 1_048_576usize]
+        .into_iter()
+        .map(|sz| {
+            let bytes = (0..sz).map(|i| (i % 256) as u8).collect::<Vec<u8>>();
+            let encoded = encode(&bytes);
+            (bytes, encoded)
+        })
+        .collect::<Vec<_>>();
     small.into_iter().chain(large).collect()
 }
 

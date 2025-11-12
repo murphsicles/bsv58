@@ -34,8 +34,8 @@ fn samples() -> Vec<(Vec<u8>, String)> {
     let large = vec![
         (1024usize, || (0..1024).map(|i| (i % 256) as u8).collect()),
         (1_048_576usize, || (0..1_048_576).map(|i| (i % 256) as u8).collect()), // 1MB
-    ].into_iter().map(|(sz, gen)| {
-        let bytes = gen();
+    ].into_iter().map(|(sz, r#gen)| {
+        let bytes = r#gen();
         let encoded = encode(&bytes);
         (bytes, encoded)
     }).collect::<Vec<_>>();

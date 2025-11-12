@@ -19,33 +19,35 @@ mod dispatch {
 
     /// Unrolled divmod: Array / BASE -> quot, % BASE -> rem (u8).
     pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {
-        let mut quot = [0u32; N];
-        let mut rem = [0u8; N];
-        #[cfg(target_arch = "x86_64")]
-        {
-            if N == 8 && std::arch::is_x86_feature_detected!("avx2") {
+        match N {
+            8 if cfg!(target_arch = "x86_64") && std::arch::is_x86_feature_detected!("avx2") => {
                 let (q, r) = unsafe { avx2_divmod_batch(vec) };
+                let mut quot = [0u32; 8];
+                let mut rem = [0u8; 8];
                 quot.copy_from_slice(&q);
                 rem.copy_from_slice(&r);
-                return (quot, rem);
+                (quot, rem)
             }
-        }
-        #[cfg(target_arch = "aarch64")]
-        {
-            if N == 4 && std::arch::is_aarch64_feature_detected!("neon") {
+            4 if cfg!(target_arch = "aarch64") && std::arch::is_aarch64_feature_detected!("neon") => {
                 let (q, r) = unsafe { neon_divmod_batch(vec) };
+                let mut quot = [0u32; 4];
+                let mut rem = [0u8; 4];
                 quot.copy_from_slice(&q);
                 rem.copy_from_slice(&r);
-                return (quot, rem);
+                (quot, rem)
+            }
+            _ => {
+                let mut quot = [0u32; N];
+                let mut rem = [0u8; N];
+                for lane in 0..N {
+                    let v = vec[lane];
+                    let hi = ((v as u64 * M_U32 as u64) >> 32) >> P_U32 as u64;
+                    quot[lane] = hi as u32;
+                    rem[lane] = (v.wrapping_sub(quot[lane].wrapping_mul(BASE))) as u8;
+                }
+                (quot, rem)
             }
         }
-        for lane in 0..N {
-            let v = vec[lane];
-            let hi = ((v as u64 * M_U32 as u64) >> 32) >> P_U32 as u64;
-            quot[lane] = hi as u32;
-            rem[lane] = (v.wrapping_sub(quot[lane].wrapping_mul(BASE))) as u8;
-        }
-        (quot, rem)
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -123,7 +125,7 @@ mod dispatch {
         let high_u32_low = vreinterpretq_u32_u64(high_low);
         let q_low = vshrq_n_u32(high_u32_low, P_U32 as u32);
         quot[0] = vget_lane_u32(q_low, 0);
-        quot[1] = vget_lane_u32(q_low, 1);
+        quot[1] = vget_lane_u32(q_low, 2);
         rem[0] = (vec[0].wrapping_sub(quot[0].wrapping_mul(BASE))) as u8;
         rem[1] = (vec[1].wrapping_sub(quot[1].wrapping_mul(BASE))) as u8;
 
@@ -135,7 +137,7 @@ mod dispatch {
         let high_u32_high = vreinterpretq_u32_u64(high_high);
         let q_high = vshrq_n_u32(high_u32_high, P_U32 as u32);
         quot[2] = vget_lane_u32(q_high, 0);
-        quot[3] = vget_lane_u32(q_high, 1);
+        quot[3] = vget_lane_u32(q_high, 2);
         rem[2] = (vec[2].wrapping_sub(quot[2].wrapping_mul(BASE))) as u8;
         rem[3] = (vec[3].wrapping_sub(quot[3].wrapping_mul(BASE))) as u8;
 

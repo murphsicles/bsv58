@@ -13,7 +13,7 @@ mod dispatch {
 
     const BASE: u32 = 58;
     const M_U32: u32 = 4_739_274_257;
-    const P_U32: u32 = 6;
+    const P_U32: i32 = 6;
 
     /// Unrolled divmod: Array / BASE -> quot, % BASE -> rem (u8).
     pub fn divmod_batch<const N: usize>(mut vec: [u32; N]) -> ([u32; N], [u8; N]) {
@@ -30,7 +30,7 @@ mod dispatch {
         } else {
             for lane in 0..N {
                 let v = vec[lane];
-                let hi = ((v as u64 * M_U32 as u64) >> 32) >> P_U32;
+                let hi = ((v as u64 * M_U32 as u64) >> 32) >> P_U32 as u64;
                 quot[lane] = hi as u32;
                 rem[lane] = (v - quot[lane] * BASE) as u8;
             }
@@ -40,46 +40,69 @@ mod dispatch {
 
     #[cfg(all(target_arch = "x86_64"))]
     #[target_feature(enable = "avx2")]
-    unsafe fn divmod_batch_avx2(vec: &mut [u32], quot: &mut [u32], rem: &mut [u8]) {
-        let v = _mm256_loadu_si256(vec.as_ptr() as *const __m256i);
-        let m = _mm256_set1_epi32(M_U32 as i32);
-        // Low 4 u32
-        let v_low = _mm256_castsi256_si128(v);
-        let v_low_low = _mm256_castsi128_si256(v_low);
-        let mul_low_low = _mm_mul_epu32(v_low_low, _mm256_castsi128_si256(m));
-        let high_low_low = _mm_srli_epi64(mul_low_low, 32);
-        let q_low_low = _mm256_castsi128_si256(_mm_castsi128_si256(high_low_low));
-        // Shift for p=6
-        let q_low_low_shift = _mm256_srli_epi32(q_low_low, P_U32);
-        // Extract to memory or array
-        let q0 = _mm256_extract_epi32(q_low_low_shift, 0) as u32;
-        let q1 = _mm256_extract_epi32(q_low_low_shift, 1) as u32;
-        quot[0] = q0;
-        quot[1] = q1;
-        // Similar for other pairs...
-        // Note: Full impl would complete for all 8 lanes with additional mul_epu32 for v2 v3, v4 v5, v6 v7
-        // For brevity, fallback to scalar for remaining
-        for i in 0..8 {
-            let v = vec[i];
-            let hi = ((v as u64 * M_U32 as u64) >> 32) >> P_U32;
-            quot[i] = hi as u32;
-            rem[i] = (v - quot[i] * BASE) as u8;
-        }
+    unsafe fn divmod_batch_avx2(vec: &mut [u32; 8], quot: &mut [u32; 8], rem: &mut [u8; 8]) {
+        // Process in pairs using _mm_mul_epu32 for low/high u32 pairs
+        let v0 = _mm_loadu_si128(vec.as_ptr() as *const __m128i);
+        let m0 = _mm_set1_epi32(M_U32 as i32);
+        let mul0 = _mm_mul_epu32(v0, m0);
+        let high0 = _mm_srli_epi64(mul0, 32);
+        let q0 = _mm_srai_epi32(_mm_castsi128_si256(high0), P_U32);
+        quot[0] = _mm_extract_epi32(q0, 0) as u32;
+        quot[1] = _mm_extract_epi32(q0, 1) as u32;
+        rem[0] = (vec[0] - quot[0] * BASE) as u8;
+        rem[1] = (vec[1] - quot[1] * BASE) as u8;
+
+        let v1 = _mm_loadu_si128(vec[2..].as_ptr() as *const __m128i);
+        let m1 = _mm_set1_epi32(M_U32 as i32);
+        let mul1 = _mm_mul_epu32(v1, m1);
+        let high1 = _mm_srli_epi64(mul1, 32);
+        let q1 = _mm_srai_epi32(_mm_castsi128_si256(high1), P_U32);
+        quot[2] = _mm_extract_epi32(q1, 0) as u32;
+        quot[3] = _mm_extract_epi32(q1, 1) as u32;
+        rem[2] = (vec[2] - quot[2] * BASE) as u8;
+        rem[3] = (vec[3] - quot[3] * BASE) as u8;
+
+        let v2 = _mm_loadu_si128(vec[4..].as_ptr() as *const __m128i);
+        let m2 = _mm_set1_epi32(M_U32 as i32);
+        let mul2 = _mm_mul_epu32(v2, m2);
+        let high2 = _mm_srli_epi64(mul2, 32);
+        let q2 = _mm_srai_epi32(_mm_castsi128_si256(high2), P_U32);
+        quot[4] = _mm_extract_epi32(q2, 0) as u32;
+        quot[5] = _mm_extract_epi32(q2, 1) as u32;
+        rem[4] = (vec[4] - quot[4] * BASE) as u8;
+        rem[5] = (vec[5] - quot[5] * BASE) as u8;
+
+        let v3 = _mm_loadu_si128(vec[6..].as_ptr() as *const __m128i);
+        let m3 = _mm_set1_epi32(M_U32 as i32);
+        let mul3 = _mm_mul_epu32(v3, m3);
+        let high3 = _mm_srli_epi64(mul3, 32);
+        let q3 = _mm_srai_epi32(_mm_castsi128_si256(high3), P_U32);
+        quot[6] = _mm_extract_epi32(q3, 0) as u32;
+        quot[7] = _mm_extract_epi32(q3, 1) as u32;
+        rem[6] = (vec[6] - quot[6] * BASE) as u8;
+        rem[7] = (vec[7] - quot[7] * BASE) as u8;
     }
 
     #[cfg(all(target_arch = "aarch64"))]
     #[target_feature(enable = "neon")]
-    unsafe fn divmod_batch_neon(vec: &mut [u32], quot: &mut [u32], rem: &mut [u8]) {
+    unsafe fn divmod_batch_neon(vec: &mut [u32; 4], quot: &mut [u32; 4], rem: &mut [u8; 4]) {
         let v = vld1q_u32(vec.as_ptr());
         let m = vdupq_n_u32(M_U32);
-        // NEON mul for u32 to get high
-        // Use vmull_u32 for pairs, but for full, use scalar fallback for brevity
-        for i in 0..4 {
-            let v = vec[i];
-            let hi = ((v as u64 * M_U32 as u64) >> 32) >> P_U32;
-            quot[i] = hi as u32;
-            rem[i] = (v - quot[i] * BASE) as u8;
-        }
+        let mul = vmull_u32(vget_low_u32(v), vget_low_u32(m)); // Low pair
+        let high_low = vshrq_n_u64(mul, 32);
+        let q_low = vrshrq_n_s32(vreinterpretq_s32_u64(high_low), P_U32);
+        quot[0] = vgetq_lane_u32(vreinterpretq_u32_s32(q_low), 0);
+        quot[1] = vgetq_lane_u32(vreinterpretq_u32_s32(q_low), 1);
+        rem[0] = (vec[0] - quot[0] * BASE) as u8;
+        rem[1] = (vec[1] - quot[1] * BASE) as u8;
+
+        let mul_high = vmull_u32(vget_high_u32(v), vget_high_u32(m)); // High pair
+        let high_high = vshrq_n_u64(mul_high, 32);
+        let q_high = vrshrq_n_s32(vreinterpretq_s32_u64(high_high), P_U32);
+        quot[2] = vgetq_lane_u32(vreinterpretq_u32_s32(q_high), 0);
+        quot[3] = vgetq_lane_u32(vreinterpretq_u32_s32(q_high), 1);
+        rem[2] = (vec[2] - quot[2] * BASE) as u8;
+        rem[3] = (vec[3] - quot[3] * BASE) as u8;
     }
 
     /// Horner for decode: batch sum (acc * BASE + val * `BASEⁱ`) but per-lane.

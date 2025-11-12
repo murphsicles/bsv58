@@ -16,9 +16,9 @@ mod dispatch {
         vgetq_lane_u32,
         vld1q_u32,
         vmull_u32,
+        vreinterpretq_u32_u64,
         vshrq_n_u32,
         vshrq_n_u64,
-        vreinterpretq_u32_u64,
     };
     const BASE: u32 = 58;
     const M_U32: u32 = 74_051_161;

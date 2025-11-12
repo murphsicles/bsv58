@@ -6,7 +6,6 @@
 //! Perf: <4c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
 use crate::ALPHABET;
 use sha2::{Digest, Sha256};
-
 #[cfg(feature = "simd")]
 use crate::horner_batch;
 
@@ -101,18 +100,20 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
         3_364,
         195_112,
         11_316_496,
-        656_221_144,
-        38_064_808_992u64,
-        2_207_557_397_344u64,
+        656_356_768,
+        38_068_692_544,
+        2_207_984_167_552u64,
     ];
-    const BASE_POW: u64 = 128_287_872_610_944u64;
+    const BASE_POW: u64 = 128_063_121_517_616u64;
     let mut num: Vec<u64> = Vec::new();
     let num_chunks = digits.len() / N;
     let mut pos = 0usize;
     for chunk_idx in 0..num_chunks {
         let start = chunk_idx * N;
-        let chunk = &digits[start..start + N];
-        let vals: [u8; N] = chunk.try_into().expect("chunk size");
+        let end = (start + N).min(digits.len());
+        let chunk = &digits[start..end];
+        let mut vals = [0u8; N];
+        chunk.iter().enumerate().for_each(|(i, &v)| vals[i] = v);
         let partial = horner_batch(vals, &POWERS);
         if chunk_idx == 0 {
             num.push(partial);
@@ -128,24 +129,33 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
         mul_big_u64(&mut num, 58);
         add_small_u64(&mut num, val);
     }
-    // Convert u64 LE limbs to u8 BE bytes
+    // Convert u64 LE limbs to u8 BE bytes, trim leading zeros
     let mut bytes = Vec::new();
+    let mut leading_zero_limbs = true;
     for &limb in num.iter().rev() {
+        if leading_zero_limbs && limb == 0 {
+            continue;
+        }
+        leading_zero_limbs = false;
         bytes.extend_from_slice(&limb.to_be_bytes());
+    }
+    if bytes.is_empty() {
+        bytes.push(0);
     }
     output.extend_from_slice(&bytes);
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
 }
 #[inline]
 fn mul_big_u64(num: &mut Vec<u64>, small: u64) {
-    let mut carry = 0u64;
+    let mut carry = 0u128;
     for limb in num.iter_mut() {
-        let temp: u128 = u128::from(*limb) * u128::from(small) + u128::from(carry);
-        *limb = temp as u64;
-        carry = (temp >> 64) as u64;
+        carry += u128::from(*limb) * u128::from(small);
+        *limb = (carry & 0xFFFFFFFFFFFFFFFFu128) as u64;
+        carry >>= 64;
     }
-    if carry > 0 {
-        num.push(carry);
+    while carry > 0 {
+        num.push((carry & 0xFFFFFFFFFFFFFFFFu128) as u64);
+        carry >>= 64;
     }
 }
 #[inline]
@@ -159,9 +169,13 @@ fn add_small_u64(num: &mut Vec<u64>, mut small: u64) {
             num.push(small);
             return;
         }
-        let (val, over) = num[i].overflowing_add(small);
-        num[i] = val;
-        small = if over { 1 } else { 0 };
+        let prev = num[i];
+        num[i] = prev.wrapping_add(small);
+        if num[i] < prev {
+            small = 1;
+        } else {
+            small = 0;
+        }
         i += 1;
     }
 }
@@ -274,5 +288,12 @@ mod tests {
         let expected = hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f");
         let dec = decode(input).unwrap();
         assert_eq!(dec, expected.to_vec());
+    }
+    #[test]
+    fn large_decode() {
+        let long = vec![42u8; 1024];
+        let enc = crate::encode(&long);
+        let dec = decode(&enc).unwrap();
+        assert_eq!(dec, long);
     }
 }

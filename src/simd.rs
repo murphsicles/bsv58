@@ -22,7 +22,8 @@ mod dispatch {
         #[cfg(target_arch = "x86_64")]
         {
             if N == 8 && std::arch::is_x86_feature_detected!("avx2") {
-                let vec8 = std::mem::transmute::<[u32; N], [u32; 8]>(vec);
+                let mut vec8 = [0u32; 8];
+                vec8.copy_from_slice(&vec);
                 let (q8, r8) = unsafe { avx2_divmod_batch(vec8) };
                 let mut quot = [0u32; N];
                 quot.copy_from_slice(&q8);
@@ -34,7 +35,8 @@ mod dispatch {
         #[cfg(target_arch = "aarch64")]
         {
             if N == 4 && std::arch::is_aarch64_feature_detected!("neon") {
-                let vec4 = std::mem::transmute::<[u32; N], [u32; 4]>(vec);
+                let mut vec4 = [0u32; 4];
+                vec4.copy_from_slice(&vec);
                 let (q4, r4) = unsafe { neon_divmod_batch(vec4) };
                 let mut quot = [0u32; N];
                 quot.copy_from_slice(&q4);
@@ -66,7 +68,7 @@ mod dispatch {
         let m0 = _mm_set1_epi32(M_U32 as i32);
         let mul0 = _mm_mul_epu32(v0, m0);
         let high0 = _mm_srli_epi64(mul0, 32);
-        let q0 = _mm_srli_epi32(high0, P_U32);
+        let q0 = _mm_srli_epi32(high0, P_U32 as i32);
         quot[0] = _mm_extract_epi32(q0, 0) as u32;
         quot[1] = _mm_extract_epi32(q0, 2) as u32;
         rem[0] = (vec[0].wrapping_sub(quot[0].wrapping_mul(BASE))) as u8;
@@ -78,7 +80,7 @@ mod dispatch {
         let m1 = _mm_set1_epi32(M_U32 as i32);
         let mul1 = _mm_mul_epu32(v1, m1);
         let high1 = _mm_srli_epi64(mul1, 32);
-        let q1 = _mm_srli_epi32(high1, P_U32);
+        let q1 = _mm_srli_epi32(high1, P_U32 as i32);
         quot[2] = _mm_extract_epi32(q1, 0) as u32;
         quot[3] = _mm_extract_epi32(q1, 2) as u32;
         rem[2] = (vec[2].wrapping_sub(quot[2].wrapping_mul(BASE))) as u8;
@@ -90,7 +92,7 @@ mod dispatch {
         let m2 = _mm_set1_epi32(M_U32 as i32);
         let mul2 = _mm_mul_epu32(v2, m2);
         let high2 = _mm_srli_epi64(mul2, 32);
-        let q2 = _mm_srli_epi32(high2, P_U32);
+        let q2 = _mm_srli_epi32(high2, P_U32 as i32);
         quot[4] = _mm_extract_epi32(q2, 0) as u32;
         quot[5] = _mm_extract_epi32(q2, 2) as u32;
         rem[4] = (vec[4].wrapping_sub(quot[4].wrapping_mul(BASE))) as u8;
@@ -102,7 +104,7 @@ mod dispatch {
         let m3 = _mm_set1_epi32(M_U32 as i32);
         let mul3 = _mm_mul_epu32(v3, m3);
         let high3 = _mm_srli_epi64(mul3, 32);
-        let q3 = _mm_srli_epi32(high3, P_U32);
+        let q3 = _mm_srli_epi32(high3, P_U32 as i32);
         quot[6] = _mm_extract_epi32(q3, 0) as u32;
         quot[7] = _mm_extract_epi32(q3, 2) as u32;
         rem[6] = (vec[6].wrapping_sub(quot[6].wrapping_mul(BASE))) as u8;

@@ -163,7 +163,7 @@ fn add_small_u64(num: &mut Vec<u64>, mut small: u64) {
         }
         let prev = num[i];
         num[i] = prev.wrapping_add(small);
-        small = (num[i] < prev) as u64;
+        small = u64::from(num[i] < prev);
         i += 1;
     }
 }

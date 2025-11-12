@@ -6,8 +6,9 @@
 use base58::{FromBase58, ToBase58};
 use bs58::{decode as bs58_decode, encode as bs58_encode};
 use bsv58::{decode, decode_full, encode};
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use hex_literal::hex;
+use std::hint::black_box;
 use std::time::Duration;
 
 /// Samples: Small BSV (bytes, encoded); large patterned.
@@ -32,9 +33,9 @@ fn samples() -> Vec<(Vec<u8>, String)> {
         ),
     ];
     let large = vec![
-        (1024usize, || (0..1024).map(|i| (i % 256) as u8).collect()),
+        (1024usize, || (0..1024).map(|i| (i % 256) as u8).collect::<Vec<u8>>()),
         (1_048_576usize, || {
-            (0..1_048_576).map(|i| (i % 256) as u8).collect()
+            (0..1_048_576).map(|i| (i % 256) as u8).collect::<Vec<u8>>()
         }), // 1MB
     ]
     .into_iter()
@@ -123,11 +124,10 @@ fn bench_roundtrip(c: &mut Criterion) {
     group
         .sample_size(200)
         .measurement_time(Duration::from_secs(2));
-    for (bytes, encoded) in samples() {
+    for (bytes, _) in samples() {
         let size = bytes.len();
         group.throughput(Throughput::Bytes(size as u64));
         let input = black_box(&bytes);
-        let s = black_box(&encoded);
         group.bench_function(BenchmarkId::new("bsv58", format!("{}B", size)), |b| {
             b.iter(|| {
                 let enc = encode(black_box(input));

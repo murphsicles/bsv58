@@ -2,7 +2,7 @@
 //! Baselines: base58 (slow) + bs58 (fast).
 //! Run: cargo bench --bench bench [-- --save-baselines --open].
 //! Outputs: MB/s (higher better); HTML in target/criterion.
-//! Projections (i9/M3): bsv58 ~500 MB/s encode/decode (4x+ bs58 ~120 MB/s on 1KB+).
+//! Projections (i9/M3): bsv58 ~600 MB/s encode/decode (5x bs58 ~120 MB/s on 1KB+).
 use base58::{FromBase58, ToBase58};
 use bs58::{decode as bs58_decode, encode as bs58_encode};
 use bsv58::{decode, decode_full, encode};
@@ -10,7 +10,6 @@ use criterion::{black_box, BenchmarkId, Criterion, Throughput, criterion_group, 
 use hex_literal::hex;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use std::hint::black_box;
 use std::time::Duration;
 
 /// Samples: Small BSV (bytes, encoded); large random.

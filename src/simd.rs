@@ -12,10 +12,6 @@ mod dispatch {
     use std::arch::x86_64::*;
     #[cfg(target_arch = "aarch64")]
     use std::arch::aarch64::*;
-    #[cfg(target_arch = "aarch64")]
-    use std::arch::is_aarch64_feature_detected;
-    #[cfg(target_arch = "x86_64")]
-    use std::arch::is_x86_feature_detected;
 
     const BASE: u32 = 58;
     const M_U32: u32 = 4_739_274_257;
@@ -25,110 +21,125 @@ mod dispatch {
     pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {
         let mut quot = [0u32; N];
         let mut rem = [0u8; N];
-        if N == 8 && cfg!(target_arch = "x86_64") && is_x86_feature_detected!("avx2") {
-            unsafe {
-                let mut vec_arr: [u32; 8] = vec;
-                let mut quot_arr: [u32; 8] = [0; 8];
-                let mut rem_arr: [u8; 8] = [0; 8];
-                divmod_batch_avx2(&mut vec_arr, &mut quot_arr, &mut rem_arr);
-                quot.copy_from_slice(&quot_arr);
-                rem.copy_from_slice(&rem_arr);
+        match N {
+            8 if cfg!(target_arch = "x86_64") && std::arch::is_x86_feature_detected!("avx2") => {
+                let (q, r) = unsafe { avx2_divmod_batch(vec) };
+                quot.copy_from_slice(&q);
+                rem.copy_from_slice(&r);
             }
-        } else if N == 4 && cfg!(target_arch = "aarch64") && is_aarch64_feature_detected!("neon") {
-            unsafe {
-                let mut vec_arr: [u32; 4] = vec;
-                let mut quot_arr: [u32; 4] = [0; 4];
-                let mut rem_arr: [u8; 4] = [0; 4];
-                divmod_batch_neon(&mut vec_arr, &mut quot_arr, &mut rem_arr);
-                quot.copy_from_slice(&quot_arr);
-                rem.copy_from_slice(&rem_arr);
+            4 if cfg!(target_arch = "aarch64") && std::arch::is_aarch64_feature_detected!("neon") => {
+                let (q, r) = unsafe { neon_divmod_batch(vec) };
+                quot.copy_from_slice(&q);
+                rem.copy_from_slice(&r);
             }
-        } else {
-            for lane in 0..N {
-                let v = vec[lane];
-                let hi = ((v as u64 * M_U32 as u64) >> 32) >> P_U32 as u64;
-                quot[lane] = hi as u32;
-                rem[lane] = (v - quot[lane] * BASE) as u8;
+            _ => {
+                for lane in 0..N {
+                    let v = vec[lane];
+                    let hi = ((v as u64 * M_U32 as u64) >> 32) >> P_U32 as u64;
+                    quot[lane] = hi as u32;
+                    rem[lane] = (v.wrapping_sub(quot[lane].wrapping_mul(BASE))) as u8;
+                }
             }
         }
         (quot, rem)
     }
 
-    #[cfg(all(target_arch = "x86_64"))]
     #[target_feature(enable = "avx2")]
-    unsafe fn divmod_batch_avx2(vec: &mut [u32; 8], quot: &mut [u32; 8], rem: &mut [u8; 8]) {
-        // Load and process in 128-bit chunks for _mm_mul_epu32 compatibility
+    unsafe fn avx2_divmod_batch(vec: [u32; 8]) -> ([u32; 8], [u8; 8]) {
+        let mut quot = [0u32; 8];
+        let mut rem = [0u8; 8];
+
+        // Process pairs 0-1
         let v0 = _mm_loadu_si128(vec.as_ptr() as *const __m128i);
         let m0 = _mm_set1_epi32(M_U32 as i32);
         let mul0 = _mm_mul_epu32(v0, m0);
         let high0 = _mm_srli_epi64(mul0, 32);
-        let q0 = _mm_srai_epi32(_mm_castsi128_si256(high0), P_U32);
+        let q0 = _mm_srli_epi32(high0, P_U32);
         quot[0] = _mm_extract_epi32(q0, 0) as u32;
-        quot[1] = _mm_extract_epi32(q0, 1) as u32;
-        rem[0] = (vec[0] - quot[0] * BASE) as u8;
-        rem[1] = (vec[1] - quot[1] * BASE) as u8;
+        quot[1] = _mm_extract_epi32(q0, 2) as u32;
+        rem[0] = (vec[0].wrapping_sub(quot[0].wrapping_mul(BASE))) as u8;
+        rem[1] = (vec[1].wrapping_sub(quot[1].wrapping_mul(BASE))) as u8;
 
+        // Pairs 2-3
         let v1_ptr = vec.as_ptr().add(2) as *const __m128i;
         let v1 = _mm_loadu_si128(v1_ptr);
         let m1 = _mm_set1_epi32(M_U32 as i32);
         let mul1 = _mm_mul_epu32(v1, m1);
         let high1 = _mm_srli_epi64(mul1, 32);
-        let q1 = _mm_srai_epi32(_mm_castsi128_si256(high1), P_U32);
+        let q1 = _mm_srli_epi32(high1, P_U32);
         quot[2] = _mm_extract_epi32(q1, 0) as u32;
-        quot[3] = _mm_extract_epi32(q1, 1) as u32;
-        rem[2] = (vec[2] - quot[2] * BASE) as u8;
-        rem[3] = (vec[3] - quot[3] * BASE) as u8;
+        quot[3] = _mm_extract_epi32(q1, 2) as u32;
+        rem[2] = (vec[2].wrapping_sub(quot[2].wrapping_mul(BASE))) as u8;
+        rem[3] = (vec[3].wrapping_sub(quot[3].wrapping_mul(BASE))) as u8;
 
+        // Pairs 4-5
         let v2_ptr = vec.as_ptr().add(4) as *const __m128i;
         let v2 = _mm_loadu_si128(v2_ptr);
         let m2 = _mm_set1_epi32(M_U32 as i32);
         let mul2 = _mm_mul_epu32(v2, m2);
         let high2 = _mm_srli_epi64(mul2, 32);
-        let q2 = _mm_srai_epi32(_mm_castsi128_si256(high2), P_U32);
+        let q2 = _mm_srli_epi32(high2, P_U32);
         quot[4] = _mm_extract_epi32(q2, 0) as u32;
-        quot[5] = _mm_extract_epi32(q2, 1) as u32;
-        rem[4] = (vec[4] - quot[4] * BASE) as u8;
-        rem[5] = (vec[5] - quot[5] * BASE) as u8;
+        quot[5] = _mm_extract_epi32(q2, 2) as u32;
+        rem[4] = (vec[4].wrapping_sub(quot[4].wrapping_mul(BASE))) as u8;
+        rem[5] = (vec[5].wrapping_sub(quot[5].wrapping_mul(BASE))) as u8;
 
+        // Pairs 6-7
         let v3_ptr = vec.as_ptr().add(6) as *const __m128i;
         let v3 = _mm_loadu_si128(v3_ptr);
         let m3 = _mm_set1_epi32(M_U32 as i32);
         let mul3 = _mm_mul_epu32(v3, m3);
         let high3 = _mm_srli_epi64(mul3, 32);
-        let q3 = _mm_srai_epi32(_mm_castsi128_si256(high3), P_U32);
+        let q3 = _mm_srli_epi32(high3, P_U32);
         quot[6] = _mm_extract_epi32(q3, 0) as u32;
-        quot[7] = _mm_extract_epi32(q3, 1) as u32;
-        rem[6] = (vec[6] - quot[6] * BASE) as u8;
-        rem[7] = (vec[7] - quot[7] * BASE) as u8;
+        quot[7] = _mm_extract_epi32(q3, 2) as u32;
+        rem[6] = (vec[6].wrapping_sub(quot[6].wrapping_mul(BASE))) as u8;
+        rem[7] = (vec[7].wrapping_sub(quot[7].wrapping_mul(BASE))) as u8;
+
+        (quot, rem)
     }
 
-    #[cfg(all(target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     #[target_feature(enable = "neon")]
-    unsafe fn divmod_batch_neon(vec: &mut [u32; 4], quot: &mut [u32; 4], rem: &mut [u8; 4]) {
+    unsafe fn neon_divmod_batch(vec: [u32; 4]) -> ([u32; 4], [u8; 4]) {
+        let mut quot = [0u32; 4];
+        let mut rem = [0u8; 4];
+
         let v = vld1q_u32(vec.as_ptr());
         let m = vdupq_n_u32(M_U32);
-        let mul_low = vmull_u32(vget_low_u32(v), vget_low_u32(m));
-        let high_low = vshrq_n_u64(mul_low, 32);
-        let q_low = vrshrq_n_s32(vreinterpretq_s32_u64(high_low), P_U32);
-        quot[0] = vgetq_lane_u32(vreinterpretq_u32_s32(q_low), 0);
-        quot[1] = vgetq_lane_u32(vreinterpretq_u32_s32(q_low), 1);
-        rem[0] = (vec[0] - quot[0] * BASE) as u8;
-        rem[1] = (vec[1] - quot[1] * BASE) as u8;
 
-        let mul_high = vmull_u32(vget_high_u32(v), vget_high_u32(m));
+        // Low pair (0-1)
+        let low_v = vget_low_u32(v);
+        let low_m = vget_low_u32(m);
+        let mul_low = vmull_u32(low_v, low_m);
+        let high_low = vshrq_n_u64(mul_low, 32);
+        let high_u32_low = vreinterpretq_u32_u64(high_low);
+        let q_low = vshrq_n_u32(high_u32_low, P_U32 as u32);
+        quot[0] = vgetq_lane_u32(q_low, 0);
+        quot[1] = vgetq_lane_u32(q_low, 2);
+        rem[0] = (vec[0].wrapping_sub(quot[0].wrapping_mul(BASE))) as u8;
+        rem[1] = (vec[1].wrapping_sub(quot[1].wrapping_mul(BASE))) as u8;
+
+        // High pair (2-3)
+        let high_v = vget_high_u32(v);
+        let high_m = vget_high_u32(m);
+        let mul_high = vmull_u32(high_v, high_m);
         let high_high = vshrq_n_u64(mul_high, 32);
-        let q_high = vrshrq_n_s32(vreinterpretq_s32_u64(high_high), P_U32);
-        quot[2] = vgetq_lane_u32(vreinterpretq_u32_s32(q_high), 0);
-        quot[3] = vgetq_lane_u32(vreinterpretq_u32_s32(q_high), 1);
-        rem[2] = (vec[2] - quot[2] * BASE) as u8;
-        rem[3] = (vec[3] - quot[3] * BASE) as u8;
+        let high_u32_high = vreinterpretq_u32_u64(high_high);
+        let q_high = vshrq_n_u32(high_u32_high, P_U32 as u32);
+        quot[2] = vgetq_lane_u32(q_high, 0);
+        quot[3] = vgetq_lane_u32(q_high, 2);
+        rem[2] = (vec[2].wrapping_sub(quot[2].wrapping_mul(BASE))) as u8;
+        rem[3] = (vec[3].wrapping_sub(quot[3].wrapping_mul(BASE))) as u8;
+
+        (quot, rem)
     }
 
     /// Horner for decode: batch sum (acc * BASE + val * `BASEⁱ`) but per-lane.
     pub fn horner_batch<const N: usize>(vals: [u8; N], powers: &[u64; N]) -> u64 {
         let mut acc: u64 = 0;
         for i in 0..N {
-            acc += u64::from(vals[i]) * powers[i];
+            acc = acc.saturating_add(u64::from(vals[i]).saturating_mul(powers[i]));
         }
         acc
     }

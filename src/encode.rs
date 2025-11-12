@@ -2,7 +2,7 @@
 //! Specialized for Bitcoin SV: Bitcoin alphabet, leading zero handling as '1's.
 //! Optimizations: u32 limbs (BE) for 4x fewer ops in div loop; unsafe zero-copy reverse (~15% faster).
 //! Perf: <5c/byte scalar (unrolled carry sum); branch-free where possible.
-use crate::ALPHABET as VAL_TO_DIGIT;
+use crate::ALPHABET;
 #[must_use]
 #[inline]
 pub fn encode(input: &[u8]) -> String {
@@ -28,7 +28,7 @@ pub fn encode(input: &[u8]) -> String {
         let mut shift = 24i32;
         for _ in 0..4 {
             if idx < non_zero.len() {
-                limb |= u32::from(non_zero[idx]) << shift as u32;
+                limb |= u32::from(non_zero[idx]) << (shift as u32);
                 idx += 1;
             }
             shift = (shift - 8).max(0);
@@ -36,18 +36,19 @@ pub fn encode(input: &[u8]) -> String {
         num.push(limb);
     }
     let mut output = Vec::with_capacity(cap - zeros);
+    let base_limb: u64 = 1u64 << 32;
     loop {
-        let mut remainder = 0u32;
+        let mut remainder: u32 = 0;
         let mut all_zero = true;
         for limb in &mut num {
-            let temp = (u64::from(remainder) << 32) + u64::from(*limb);
+            let temp = u64::from(remainder) * base_limb + u64::from(*limb);
             *limb = (temp / 58) as u32;
             remainder = (temp % 58) as u32;
             if *limb != 0 {
                 all_zero = false;
             }
         }
-        output.push(VAL_TO_DIGIT[remainder as usize]);
+        output.push(ALPHABET[remainder as usize]);
         if all_zero {
             break;
         }

@@ -8,13 +8,12 @@ use bs58::{decode as bs58_decode, encode as bs58_encode};
 use bsv58::{decode, decode_full, encode};
 use criterion::{black_box, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use hex_literal::hex;
-use rand::{Rng, SeedableRng};
-use rand_chacha::ChaCha8Rng;
+use std::iter::repeat_with;
 use std::time::Duration;
 
-/// Samples: Small BSV (bytes, encoded); large random.
+/// Samples: Small BSV (bytes, encoded); large patterned.
 fn samples() -> Vec<(Vec<u8>, String)> {
-    let mut rng = ChaCha8Rng::seed_from_u64(42);
+    let pattern: Vec<u8> = repeat_with(|| (42u8)).take(256).collect();
     let small = vec![
         // Hello (5B)
         (b"hello".to_vec(), "Cn8eVZg".to_string()),
@@ -35,10 +34,16 @@ fn samples() -> Vec<(Vec<u8>, String)> {
         ),
     ];
     let large = vec![
-        (1024, || (0..1024).map(|_| rng.gen()).collect()),
-        (1_048_576, || (0..1_048_576).map(|_| rng.gen()).collect()), // 1MB
-    ].into_iter().map(|(sz, gen)| {
-        let bytes = gen();
+        (1024usize, pattern.repeat(1024 / 256)),
+        (1_048_576usize, pattern.repeat(1_048_576 / 256)),
+    ].into_iter().map(|(sz, mut pat)| {
+        if pat.len() < sz {
+            let extra = (0..(sz - pat.len())).map(|i| (i % 256) as u8).collect::<Vec<_>>();
+            pat.extend(extra);
+        } else {
+            pat.truncate(sz);
+        }
+        let bytes = pat;
         let encoded = encode(&bytes);
         (bytes, encoded)
     }).collect::<Vec<_>>();

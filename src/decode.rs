@@ -4,10 +4,8 @@
 //! u64 limbs for big int; arch-specific SIMD intrinsics (AVX2/NEON ~4x faster),
 //! scalar u64 fallback. Runtime dispatch for x86/ARM.
 //! Perf: <4c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
-use crate::ALPHABET;
+use crate::{ALPHABET, horner_batch};
 use sha2::{Digest, Sha256};
-#[cfg(feature = "simd")]
-use crate::horner_batch;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
@@ -101,46 +99,41 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
         195_112,
         11_316_496,
         656_356_768,
-        38_068_692_544,
+        38_068_692_544u64,
         2_207_984_167_552u64,
     ];
-    const BASE_POW: u64 = 128_063_121_517_616u64;
+    const BASE_POW: u64 = 128_063_081_718_016u64;
     let mut num: Vec<u64> = Vec::new();
-    let num_chunks = digits.len() / N;
-    let mut pos = 0usize;
+    let num_chunks = (digits.len() + N - 1) / N;
     for chunk_idx in 0..num_chunks {
         let start = chunk_idx * N;
         let end = (start + N).min(digits.len());
         let chunk = &digits[start..end];
         let mut vals = [0u8; N];
-        chunk.iter().enumerate().for_each(|(i, &v)| vals[i] = v);
-        let partial = horner_batch(vals, &POWERS);
+        for (i, &v) in chunk.iter().enumerate() {
+            vals[i] = DIGIT_TO_VAL[v as usize];
+        }
+        let partial = horner_batch::<N>(vals, &POWERS);
         if chunk_idx == 0 {
             num.push(partial);
         } else {
             mul_big_u64(&mut num, BASE_POW);
             add_small_u64(&mut num, partial);
         }
-        pos += N;
     }
-    // Tail: per-digit Horner
-    for &d in &digits[pos..] {
-        let val = u64::from(DIGIT_TO_VAL[d as usize]);
-        mul_big_u64(&mut num, 58);
-        add_small_u64(&mut num, val);
-    }
+    // Tail handled in chunks (padded 0)
     // Convert u64 LE limbs to u8 BE bytes, trim leading zeros
     let mut bytes = Vec::new();
-    let mut leading_zero_limbs = true;
+    let mut leading_zero = true;
     for &limb in num.iter().rev() {
-        if leading_zero_limbs && limb == 0 {
+        if leading_zero && limb == 0 {
             continue;
         }
-        leading_zero_limbs = false;
+        leading_zero = false;
         bytes.extend_from_slice(&limb.to_be_bytes());
     }
     if bytes.is_empty() {
-        bytes.push(0);
+        bytes.push(0u8);
     }
     output.extend_from_slice(&bytes);
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
@@ -171,11 +164,7 @@ fn add_small_u64(num: &mut Vec<u64>, mut small: u64) {
         }
         let prev = num[i];
         num[i] = prev.wrapping_add(small);
-        if num[i] < prev {
-            small = 1;
-        } else {
-            small = 0;
-        }
+        small = if num[i] < prev { 1 } else { 0 };
         i += 1;
     }
 }

@@ -14,8 +14,8 @@ mod dispatch {
     use std::arch::aarch64::*;
 
     const BASE: u32 = 58;
-    const M_U32: u32 = 4_739_274_257;
-    const P_U32: i32 = 6;
+    const M_U32: u32 = 74_051_161;
+    const P_U32: i32 = 0;
 
     /// Unrolled divmod: Array / BASE -> quot, % BASE -> rem (u8).
     pub fn divmod_batch<const N: usize>(vec: [u32; N]) -> ([u32; N], [u8; N]) {

@@ -93,7 +93,7 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     const N: usize = 8;
     const BASE_POW: u64 = 128_063_081_718_016u64; // 58^8
     let mut num: Vec<u64> = Vec::new();
-    let num_chunks = (digits.len() + N - 1) / N;
+    let num_chunks = digits.len().div_ceil(N);
     for chunk_idx in 0..num_chunks {
         let start = chunk_idx * N;
         let end = (start + N).min(digits.len());

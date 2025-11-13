@@ -114,7 +114,7 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     }
     // Convert u64 high-first limbs to u8 BE bytes, trim leading zero bytes
     let mut bytes = Vec::new();
-    for &limb in num {
+    for limb in num {
         bytes.extend_from_slice(&limb.to_be_bytes());
     }
     // Trim leading zero bytes

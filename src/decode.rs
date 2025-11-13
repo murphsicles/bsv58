@@ -4,7 +4,7 @@
 //! u64 limbs for big int; arch-specific SIMD intrinsics (AVX2/NEON ~4x faster),
 //! scalar fallback. Runtime dispatch for x86/ARM.
 //! Perf: <4c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
-use crate::{ALPHABET, horner_batch};
+use crate::ALPHABET;
 use sha2::{Digest, Sha256};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
@@ -91,28 +91,17 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
 #[inline]
 fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     const N: usize = 8;
-    const POWERS: [u64; N] = [
-        2_207_984_167_552u64,
-        38_068_692_544u64,
-        656_356_768,
-        11_316_496,
-        195_112,
-        3_364,
-        58,
-        1,
-    ];
-    const BASE_POW: u64 = 128_063_081_718_016u64;
+    const BASE_POW: u64 = 128_063_081_718_016u64; // 58^8
     let mut num: Vec<u64> = Vec::new();
-    let num_chunks = digits.len().div_ceil(N);
+    let num_chunks = (digits.len() + N - 1) / N;
     for chunk_idx in 0..num_chunks {
         let start = chunk_idx * N;
         let end = (start + N).min(digits.len());
         let chunk = &digits[start..end];
-        let mut vals = [0u8; N];
-        for (i, &v) in chunk.iter().enumerate() {
-            vals[i] = DIGIT_TO_VAL[v as usize];
+        let mut partial = 0u64;
+        for &v in chunk {
+            partial = partial.saturating_mul(58).saturating_add(u64::from(DIGIT_TO_VAL[v as usize]));
         }
-        let partial = horner_batch::<N>(vals, &POWERS);
         if chunk_idx == 0 {
             num.push(partial);
         } else {
@@ -120,7 +109,7 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
             add_small_u64(&mut num, partial);
         }
     }
-    // Convert u64 LE limbs to u8 BE bytes, trim leading zeros
+    // Convert u64 LE limbs to u8 BE bytes, trim leading zero bytes
     let mut bytes = Vec::new();
     let mut leading_zero = true;
     for &limb in num.iter().rev() {
@@ -132,6 +121,14 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     }
     if bytes.is_empty() {
         bytes.push(0u8);
+    } else {
+        // Trim leading zero bytes
+        if let Some(pos) = bytes.iter().position(|&b| b != 0) {
+            bytes.drain(..pos);
+        } else {
+            bytes.clear();
+            bytes.push(0u8);
+        }
     }
     output.extend_from_slice(&bytes);
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));

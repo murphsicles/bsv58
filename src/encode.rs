@@ -32,7 +32,7 @@ pub fn encode(input: &[u8]) -> String {
         }
         num.push(limb);
     }
-    let mut output = Vec::with_capacity(((non_zero.len() as f64 * 1.3652).ceil() as usize));
+    let mut output = Vec::with_capacity((non_zero.len() as f64 * 1.3652).ceil() as usize);
     loop {
         let mut remainder = 0u64;
         let mut all_zero = true;

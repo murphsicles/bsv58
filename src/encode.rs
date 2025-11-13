@@ -38,11 +38,10 @@ pub fn encode(input: &[u8]) -> String {
     while !num.iter().all(|&l| l == 0) {
         num.reverse(); // to high first
         let mut remainder = 0u64;
+        #[allow(clippy::cast_possible_truncation)]
         for limb in &mut num {
             let temp = u128::from(remainder) * (1u128 << 64) + u128::from(*limb);
-            #[allow(clippy::cast_possible_truncation)]
             *limb = (temp / 58) as u64;
-            #[allow(clippy::cast_possible_truncation)]
             remainder = (temp % 58) as u64;
         }
         num.reverse(); // back to low first

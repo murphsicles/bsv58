@@ -11,7 +11,7 @@ mod dispatch {
     #[cfg(target_arch = "aarch64")]
     use std::arch::aarch64::{
         vdupq_n_u32, vget_high_u32, vget_low_u32, vgetq_lane_u32, vld1q_u32, vmull_u32,
-        vreinterpretq_u32_u64, vshrq_n_u32, vshrq_n_u64,
+        vreinterpretq_u32_u64, vshrq_n_u64,
     };
     const BASE: u32 = 58;
     const M_U32: u32 = 74_051_161;
@@ -56,7 +56,7 @@ mod dispatch {
         let low_m = vget_low_u32(m);
         let mul_low = vmull_u32(low_v, low_m);
         let high_low = vshrq_n_u64(mul_low, 32);
-        let q_low = vshrq_n_u32(vreinterpretq_u32_u64(high_low), P_U32 as i32);
+        let q_low = vreinterpretq_u32_u64(high_low);
         quot[0] = vgetq_lane_u32(q_low, 0);
         quot[1] = vgetq_lane_u32(q_low, 2);
         rem[0] = (vec[0].wrapping_sub(quot[0].wrapping_mul(BASE))) as u8;
@@ -66,7 +66,7 @@ mod dispatch {
         let high_m = vget_high_u32(m);
         let mul_high = vmull_u32(high_v, high_m);
         let high_high = vshrq_n_u64(mul_high, 32);
-        let q_high = vshrq_n_u32(vreinterpretq_u32_u64(high_high), P_U32 as i32);
+        let q_high = vreinterpretq_u32_u64(high_high);
         quot[2] = vgetq_lane_u32(q_high, 0);
         quot[3] = vgetq_lane_u32(q_high, 2);
         rem[2] = (vec[2].wrapping_sub(quot[2].wrapping_mul(BASE))) as u8;

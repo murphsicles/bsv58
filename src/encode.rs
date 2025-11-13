@@ -41,11 +41,10 @@ pub fn encode(input: &[u8]) -> String {
     loop {
         let mut remainder = 0u64;
         let mut all_zero = true;
+        #[allow(clippy::cast_possible_truncation)]
         for limb in &mut num {
             let temp = u128::from(remainder) * (1u128 << 64) + u128::from(*limb);
-            #[allow(clippy::cast_possible_truncation)]
             *limb = (temp / 58) as u64;
-            #[allow(clippy::cast_possible_truncation)]
             remainder = (temp % 58) as u64;
             if *limb != 0 {
                 all_zero = false;

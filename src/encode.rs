@@ -32,11 +32,17 @@ pub fn encode(input: &[u8]) -> String {
         }
         num.push(limb);
     }
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
     let mut output = Vec::with_capacity((non_zero.len() as f64 * 1.3652).ceil() as usize);
     loop {
         let mut remainder = 0u64;
         let mut all_zero = true;
         for limb in &mut num {
+            #[allow(clippy::cast_possible_truncation)]
             let temp = u128::from(remainder) * (1u128 << 64) + u128::from(*limb);
             *limb = (temp / 58) as u64;
             remainder = (temp % 58) as u64;
@@ -44,6 +50,7 @@ pub fn encode(input: &[u8]) -> String {
                 all_zero = false;
             }
         }
+        #[allow(clippy::cast_possible_truncation)]
         output.push(ALPHABET[remainder as usize]);
         if all_zero {
             break;
@@ -58,7 +65,7 @@ pub fn encode(input: &[u8]) -> String {
     }
     output.reverse();
     let mut result = String::with_capacity(zeros + output.len());
-    result.extend(std::iter::repeat('1').take(zeros));
+    result.extend(std::iter::repeat_n('1', zeros));
     result.extend(output.into_iter().map(|b| b as char));
     result
 }

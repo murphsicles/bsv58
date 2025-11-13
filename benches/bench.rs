@@ -10,7 +10,6 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 use hex_literal::hex;
 use std::hint::black_box;
 use std::time::Duration;
-
 /// Samples: Small BSV (bytes, encoded); large patterned.
 fn samples() -> Vec<(Vec<u8>, String)> {
     let small = vec![
@@ -42,12 +41,10 @@ fn samples() -> Vec<(Vec<u8>, String)> {
         .collect::<Vec<_>>();
     small.into_iter().chain(large).collect()
 }
-
 /// Checksum addrs (34 chars -> 21B).
 fn checksum_addrs() -> Vec<&'static str> {
     vec!["1BitcoinEaterAddressDontSendf59kuE"]
 }
-
 /// Encode: Groups by input bytes.
 fn bench_encode(c: &mut Criterion) {
     let mut group = c.benchmark_group("encode");
@@ -59,18 +56,17 @@ fn bench_encode(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
         let input = black_box(&bytes);
         group.bench_function(BenchmarkId::new("bsv58", format!("{}B", size)), |b| {
-            b.iter(|| encode(black_box(input)));
+            b.iter(|| encode(black_box(input.as_slice())));
         });
         group.bench_function(BenchmarkId::new("base58", format!("{}B", size)), |b| {
-            b.iter(|| black_box(input.to_base58()));
+            b.iter(|| black_box(input).to_base58());
         });
         group.bench_function(BenchmarkId::new("bs58", format!("{}B", size)), |b| {
-            b.iter(|| black_box(bs58_encode(black_box(input)).into_string()));
+            b.iter(|| bs58_encode(black_box(input.as_slice())).into_string());
         });
     }
     group.finish();
 }
-
 /// Decode raw: Groups by input chars; throughput approx bytes out (~0.73 * chars).
 fn bench_decode(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode");
@@ -83,18 +79,17 @@ fn bench_decode(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(out_bytes));
         let s = black_box(&encoded);
         group.bench_function(BenchmarkId::new("bsv58", format!("{}chars", size)), |b| {
-            b.iter(|| black_box(decode(black_box(s))).unwrap());
+            b.iter(|| black_box(decode(black_box(s.as_str()))).unwrap());
         });
         group.bench_function(BenchmarkId::new("base58", format!("{}chars", size)), |b| {
             b.iter(|| black_box(s.from_base58().unwrap()));
         });
         group.bench_function(BenchmarkId::new("bs58", format!("{}chars", size)), |b| {
-            b.iter(|| black_box(bs58_decode(black_box(s)).into_vec().unwrap()));
+            b.iter(|| black_box(bs58_decode(black_box(s.as_str())).into_vec().unwrap()));
         });
     }
     group.finish();
 }
-
 /// Decode checksum: bsv58 only (sha2); small only (noisy).
 fn bench_decode_checksum(c: &mut Criterion) {
     let mut group = c.benchmark_group("decode_checksum");
@@ -112,7 +107,6 @@ fn bench_decode_checksum(c: &mut Criterion) {
     }
     group.finish();
 }
-
 /// Roundtrip: encode+decode raw; throughput bytes in.
 fn bench_roundtrip(c: &mut Criterion) {
     let mut group = c.benchmark_group("roundtrip");
@@ -125,26 +119,26 @@ fn bench_roundtrip(c: &mut Criterion) {
         let input = black_box(&bytes);
         group.bench_function(BenchmarkId::new("bsv58", format!("{}B", size)), |b| {
             b.iter(|| {
-                let enc = encode(black_box(input));
+                let enc = encode(black_box(input.as_slice()));
                 let _ = decode(&enc).unwrap();
             })
         });
         group.bench_function(BenchmarkId::new("base58", format!("{}B", size)), |b| {
             b.iter(|| {
-                let enc = black_box(input.to_base58());
+                let slice = black_box(input.as_slice());
+                let enc = slice.to_base58();
                 let _ = enc.as_str().from_base58().unwrap();
             })
         });
         group.bench_function(BenchmarkId::new("bs58", format!("{}B", size)), |b| {
             b.iter(|| {
-                let enc = bs58_encode(black_box(input)).into_string();
+                let enc = bs58_encode(black_box(input.as_slice())).into_string();
                 let _ = bs58_decode(&enc).into_vec().unwrap();
             })
         });
     }
     group.finish();
 }
-
 criterion_group!(
     benches,
     bench_encode,

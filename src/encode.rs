@@ -20,6 +20,7 @@ pub fn encode(input: &[u8]) -> String {
     while i > 0 {
         let bytes_in_limb = i.min(8usize);
         let mut limb = 0u64;
+        #[allow(clippy::cast_possible_truncation)]
         let shift_start = ((8 - bytes_in_limb) as u32) * 8;
         let mut shift = shift_start;
         for _ in 0..bytes_in_limb {
@@ -48,7 +49,7 @@ pub fn encode(input: &[u8]) -> String {
         #[allow(clippy::cast_possible_truncation)]
         output.push(ALPHABET[remainder as usize]);
         // Trim leading zero limbs (high end)
-        while let Some(&0) = num.last() {
+        while num.last() == Some(&0) {
             num.pop();
         }
     }

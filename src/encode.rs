@@ -1,6 +1,6 @@
 //! Base58 encoding module for bsv58.
 //! Specialized for Bitcoin SV: Bitcoin alphabet, leading zero handling as '1's.
-//! Optimizations: u64 limbs (LE) for fewer ops; repeated divmod with u128 temp for correctness.
+//! Optimizations: u64 limbs (high first) for fewer ops; repeated divmod with u128 temp for correctness.
 //! Perf: O(n^2 / 8) scalar; SIMD-ready for batch divmod.
 use crate::ALPHABET;
 #[must_use]
@@ -14,21 +14,19 @@ pub fn encode(input: &[u8]) -> String {
     if non_zero.is_empty() {
         return "1".repeat(zeros);
     }
-    // Pack to u64 LE limbs (low limb first)
+    // Pack to u64 high-first limbs (high byte in high bits)
     let mut num: Vec<u64> = Vec::new();
-    let mut i = non_zero.len();
-    while i > 0 {
-        let bytes_in_limb = i.min(8usize);
+    let mut i = 0;
+    while i < non_zero.len() {
+        let bytes_in_limb = (non_zero.len() - i).min(8usize);
         let mut limb = 0u64;
-        #[allow(clippy::cast_possible_truncation)]
-        let shift_start = ((8 - bytes_in_limb) as u32) * 8;
-        let mut shift = shift_start;
-        for _ in 0..bytes_in_limb {
-            i -= 1;
-            limb |= u64::from(non_zero[i]) << shift;
-            shift += 8;
+        let mut shift = 56u32;
+        for j in 0..bytes_in_limb {
+            limb |= u64::from(non_zero[i + j]) << shift;
+            shift -= 8;
         }
         num.push(limb);
+        i += 8;
     }
     #[allow(
         clippy::cast_possible_truncation,
@@ -36,16 +34,17 @@ pub fn encode(input: &[u8]) -> String {
         clippy::cast_precision_loss
     )]
     let mut output = Vec::with_capacity((non_zero.len() as f64 * 1.3652).ceil() as usize);
-    while !num.iter().all(|&l| l == 0) {
-        num.reverse(); // to high first
+    loop {
+        if num.iter().all(|&l| l == 0) {
+            break;
+        }
         let mut remainder = 0u64;
-        #[allow(clippy::cast_possible_truncation)]
         for limb in &mut num {
+            #[allow(clippy::cast_possible_truncation)]
             let temp = u128::from(remainder) * (1u128 << 64) + u128::from(*limb);
             *limb = (temp / 58) as u64;
             remainder = (temp % 58) as u64;
         }
-        num.reverse(); // back to low first
         #[allow(clippy::cast_possible_truncation)]
         output.push(ALPHABET[remainder as usize]);
         // Trim leading zero limbs (high end)

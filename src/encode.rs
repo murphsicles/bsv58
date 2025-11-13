@@ -18,17 +18,14 @@ pub fn encode(input: &[u8]) -> String {
     let mut num: Vec<u64> = Vec::new();
     let mut i = non_zero.len();
     while i > 0 {
+        let bytes_in_limb = i.min(8usize);
         let mut limb = 0u64;
-        let mut shift = 0u32;
-        for _ in 0..8 {
-            if i > 0 {
-                i -= 1;
-                limb |= u64::from(non_zero[i]) << shift;
-            }
+        let shift_start = ((8 - bytes_in_limb) as u32) * 8;
+        let mut shift = shift_start;
+        for _ in 0..bytes_in_limb {
+            i -= 1;
+            limb |= u64::from(non_zero[i]) << shift;
             shift += 8;
-            if shift >= 64 {
-                break;
-            }
         }
         num.push(limb);
     }
@@ -38,29 +35,22 @@ pub fn encode(input: &[u8]) -> String {
         clippy::cast_precision_loss
     )]
     let mut output = Vec::with_capacity((non_zero.len() as f64 * 1.3652).ceil() as usize);
-    loop {
+    while !num.iter().all(|&l| l == 0) {
+        num.reverse(); // to high first
         let mut remainder = 0u64;
-        let mut all_zero = true;
-        #[allow(clippy::cast_possible_truncation)]
         for limb in &mut num {
             let temp = u128::from(remainder) * (1u128 << 64) + u128::from(*limb);
+            #[allow(clippy::cast_possible_truncation)]
             *limb = (temp / 58) as u64;
+            #[allow(clippy::cast_possible_truncation)]
             remainder = (temp % 58) as u64;
-            if *limb != 0 {
-                all_zero = false;
-            }
         }
+        num.reverse(); // back to low first
         #[allow(clippy::cast_possible_truncation)]
         output.push(ALPHABET[remainder as usize]);
-        if all_zero {
-            break;
-        }
         // Trim leading zero limbs (high end)
-        while num.last() == Some(&0) {
+        while let Some(&0) = num.last() {
             num.pop();
-        }
-        if num.is_empty() {
-            break;
         }
     }
     output.reverse();

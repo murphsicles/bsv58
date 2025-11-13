@@ -101,7 +101,9 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
         let chunk = &digits[chunk_start..chunk_start + chunk_len];
         let mut partial = 0u64;
         for &v in chunk {
-            partial = partial.wrapping_mul(58).wrapping_add(u64::from(DIGIT_TO_VAL[v as usize]));
+            partial = partial
+                .wrapping_mul(58)
+                .wrapping_add(u64::from(DIGIT_TO_VAL[v as usize]));
         }
         if chunk_idx == 0 {
             num.push(partial);

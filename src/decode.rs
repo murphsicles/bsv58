@@ -2,11 +2,10 @@
 //! BSV-only: Bitcoin alphabet, optional double-SHA256 checksum validation.
 //! Optimizations: Precomp table for char->val, chunked Horner (N=8) for O(n) effective ops on large,
 //! u64 limbs for big int; arch-specific SIMD intrinsics (AVX2/NEON ~4x faster),
-//! scalar u64 fallback. Runtime dispatch for x86/ARM.
+//! scalar fallback. Runtime dispatch for x86/ARM.
 //! Perf: <4c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
 use crate::{ALPHABET, horner_batch};
 use sha2::{Digest, Sha256};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
     /// Invalid character at position.
@@ -93,14 +92,14 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
 fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     const N: usize = 8;
     const POWERS: [u64; N] = [
-        1,
-        58,
-        3_364,
-        195_112,
-        11_316_496,
-        656_356_768,
-        38_068_692_544u64,
         2_207_984_167_552u64,
+        38_068_692_544u64,
+        656_356_768,
+        11_316_496,
+        195_112,
+        3_364,
+        58,
+        1,
     ];
     const BASE_POW: u64 = 128_063_081_718_016u64;
     let mut num: Vec<u64> = Vec::new();

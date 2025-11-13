@@ -95,43 +95,34 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     let len = digits.len();
     let num_chunks = len.div_ceil(N);
     let mut num: Vec<u64> = Vec::new();
+    let mut is_first = true;
     for chunk_idx in 0..num_chunks {
-        let chunk_len = (len - chunk_idx * N).min(N);
-        let chunk_start = (len - (chunk_idx + 1) * N).max(0);
-        let chunk = &digits[chunk_start..chunk_start + chunk_len];
+        let start = chunk_idx * N;
+        let end = (start + N).min(len);
+        let chunk = &digits[start..end];
         let mut partial = 0u64;
         for &v in chunk {
-            partial = partial
-                .wrapping_mul(58)
-                .wrapping_add(u64::from(DIGIT_TO_VAL[v as usize]));
+            partial = partial.wrapping_mul(58).wrapping_add(u64::from(DIGIT_TO_VAL[v as usize]));
         }
-        if chunk_idx == 0 {
+        if is_first {
             num.push(partial);
+            is_first = false;
         } else {
             mul_big_u64(&mut num, BASE_POW);
             add_small_u64(&mut num, partial);
         }
     }
-    // Convert u64 LE limbs to u8 BE bytes, trim leading zero bytes
+    // Convert u64 high-first limbs to u8 BE bytes, trim leading zero bytes
     let mut bytes = Vec::new();
-    let mut leading_zero = true;
-    for &limb in num.iter().rev() {
-        if leading_zero && limb == 0 {
-            continue;
-        }
-        leading_zero = false;
+    for &limb in num {
         bytes.extend_from_slice(&limb.to_be_bytes());
+    }
+    // Trim leading zero bytes
+    if let Some(pos) = bytes.iter().position(|&b| b != 0) {
+        bytes.drain(..pos);
     }
     if bytes.is_empty() {
         bytes.push(0u8);
-    } else {
-        // Trim leading zero bytes
-        if let Some(pos) = bytes.iter().position(|&b| b != 0) {
-            bytes.drain(..pos);
-        } else {
-            bytes.clear();
-            bytes.push(0u8);
-        }
     }
     output.extend_from_slice(&bytes);
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));

@@ -92,17 +92,16 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
 fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     const N: usize = 8;
     const BASE_POW: u64 = 128_063_081_718_016u64; // 58^8
+    let len = digits.len();
+    let num_chunks = len.div_ceil(N);
     let mut num: Vec<u64> = Vec::new();
-    let num_chunks = digits.len().div_ceil(N);
     for chunk_idx in 0..num_chunks {
-        let start = chunk_idx * N;
-        let end = (start + N).min(digits.len());
-        let chunk = &digits[start..end];
+        let chunk_len = (len - chunk_idx * N).min(N);
+        let chunk_start = (len - (chunk_idx + 1) * N).max(0);
+        let chunk = &digits[chunk_start..chunk_start + chunk_len];
         let mut partial = 0u64;
         for &v in chunk {
-            partial = partial
-                .saturating_mul(58)
-                .saturating_add(u64::from(DIGIT_TO_VAL[v as usize]));
+            partial = partial.wrapping_mul(58).wrapping_add(u64::from(DIGIT_TO_VAL[v as usize]));
         }
         if chunk_idx == 0 {
             num.push(partial);

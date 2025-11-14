@@ -6,6 +6,7 @@
 //! Perf: <4c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
 use crate::ALPHABET;
 use sha2::{Digest, Sha256};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
     /// Invalid character at position.
@@ -15,6 +16,7 @@ pub enum DecodeError {
     /// Payload too short for checksum (needs >=4 bytes).
     InvalidLength,
 }
+
 /// Decodes a Base58 string (Bitcoin alphabet) to bytes (no checksum).
 ///
 /// # Errors
@@ -23,6 +25,7 @@ pub enum DecodeError {
 pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
     decode_full(input, false)
 }
+
 /// Decodes a `Base58Check` string (Bitcoin alphabet) to bytes, optionally validating checksum.
 /// Validates BSV-style checksum if `validate_checksum=true` (default false for raw payloads).
 ///
@@ -34,17 +37,17 @@ pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
 /// # Performance Notes
 /// - Capacity: ~0.733 * input len (log256(58)).
 /// - SIMD: AVX2 (8 digits x86), NEON (4 digits ARM); scalar fallback.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
 #[inline]
 pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {
     if input.is_empty() {
         return Ok(vec![]);
     }
     let bytes = input.as_bytes();
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_precision_loss
-    )]
     let cap = ((bytes.len() as f64 * 0.733).ceil() as usize).max(1);
     let mut output = Vec::with_capacity(cap);
     let zeros = bytes.iter().take_while(|&&b| b == b'1').count();
@@ -87,6 +90,7 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
     }
     finish_decode(output, validate_checksum)
 }
+
 #[allow(clippy::cast_possible_truncation)]
 #[inline]
 fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
@@ -127,6 +131,7 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     output.extend_from_slice(&bytes);
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
 }
+
 #[inline]
 fn mul_big_u64(num: &mut Vec<u64>, small: u64) {
     let mut carry = 0u128;
@@ -140,6 +145,7 @@ fn mul_big_u64(num: &mut Vec<u64>, small: u64) {
         carry >>= 64;
     }
 }
+
 #[inline]
 fn add_small_u64(num: &mut Vec<u64>, mut small: u64) {
     if small == 0 {
@@ -157,6 +163,7 @@ fn add_small_u64(num: &mut Vec<u64>, mut small: u64) {
         i += 1;
     }
 }
+
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
 #[target_feature(enable = "avx2")]
 #[allow(
@@ -168,6 +175,7 @@ fn add_small_u64(num: &mut Vec<u64>, mut small: u64) {
 unsafe fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     decode_scalar(output, digits, zeros);
 }
+
 #[cfg(all(target_arch = "aarch64", feature = "simd"))]
 #[target_feature(enable = "neon")]
 #[allow(
@@ -179,6 +187,7 @@ unsafe fn decode_simd_x86(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
 unsafe fn decode_simd_arm(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     decode_scalar(output, digits, zeros);
 }
+
 fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {
     if validate_checksum {
         if output.len() < 4 {
@@ -196,6 +205,7 @@ fn finish_decode(mut output: Vec<u8>, validate_checksum: bool) -> Result<Vec<u8>
     }
     Ok(output)
 }
+
 const DIGIT_TO_VAL: [u8; 128] = {
     let mut table = [255u8; 128];
     let alphabet = &ALPHABET;
@@ -211,6 +221,7 @@ const DIGIT_TO_VAL: [u8; 128] = {
     }
     table
 };
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -3,6 +3,8 @@
 //! Optimizations: u64 limbs (high first) for fewer ops; repeated divmod with u128 temp for correctness.
 //! Perf: O(n^2 / 8) scalar; SIMD-ready for batch divmod.
 use crate::ALPHABET;
+
+#[allow(clippy::cast_possible_truncation)]
 #[must_use]
 #[inline]
 pub fn encode(input: &[u8]) -> String {
@@ -38,14 +40,13 @@ pub fn encode(input: &[u8]) -> String {
         if num.iter().all(|&l| l == 0) {
             break;
         }
-        let mut remainder = 0u64;
-        for limb in &mut num {
-            #[allow(clippy::cast_possible_truncation)]
+        let mut r: u128 = 0;
+        for limb in num.iter_mut() {
+            let temp = (r << 64) | u128::from(*limb);
             *limb = (temp / 58) as u64;
-            remainder = (temp % 58) as u64;
+            r = temp % 58;
         }
-        #[allow(clippy::cast_possible_truncation)]
-        output.push(ALPHABET[remainder as usize]);
+        output.push(ALPHABET[r as usize]);
         // Trim leading zero limbs (high end)
         while num.last() == Some(&0) {
             num.pop();
@@ -57,6 +58,7 @@ pub fn encode(input: &[u8]) -> String {
     result.extend(output.into_iter().map(|b| b as char));
     result
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

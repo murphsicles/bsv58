@@ -41,7 +41,7 @@ pub fn encode(input: &[u8]) -> String {
             break;
         }
         let mut r: u128 = 0;
-        for limb in num.iter_mut() {
+        for limb in &mut num {
             let temp = (r << 64) | u128::from(*limb);
             *limb = (temp / 58) as u64;
             r = temp % 58;

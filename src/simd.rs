@@ -23,7 +23,7 @@ mod dispatch {
         #[cfg(target_arch = "aarch64")]
         {
             if N == 4 && std::arch::is_aarch64_feature_detected!("neon") {
-                let vec4 = vec;
+                let vec4 = [vec[0], vec[1], vec[2], vec[3]];
                 let (q4, r4) = unsafe { neon_divmod_batch(vec4) };
                 let mut quot = [0u32; N];
                 quot.copy_from_slice(&q4);

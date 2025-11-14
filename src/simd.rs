@@ -10,7 +10,8 @@ pub use self::dispatch::{divmod_batch, horner_batch};
 mod dispatch {
     #[cfg(target_arch = "aarch64")]
     use std::arch::aarch64::{
-        vdupq_n_u32, vgetq_lane_u32, vld1q_u32, vmullq_u32, vreinterpretq_u32_u64, vshrq_n_u64,
+        vdupq_n_u32, vget_high_u32, vget_low_u32, vgetq_lane_u32, vld1q_u32, vmull_u32,
+        vreinterpretq_u32_u64, vshrq_n_u64,
     };
     const BASE: u32 = 58;
     const M_U32: u32 = 74_051_161;
@@ -22,7 +23,7 @@ mod dispatch {
         #[cfg(target_arch = "aarch64")]
         {
             if N == 4 && std::arch::is_aarch64_feature_detected!("neon") {
-                let vec4: [u32; 4] = vec.try_into().unwrap();
+                let vec4 = vec;
                 let (q4, r4) = unsafe { neon_divmod_batch(vec4) };
                 let mut quot = [0u32; N];
                 quot.copy_from_slice(&q4);
@@ -45,21 +46,30 @@ mod dispatch {
     #[target_feature(enable = "neon")]
     #[allow(unsafe_op_in_unsafe_fn, clippy::cast_possible_truncation)]
     unsafe fn neon_divmod_batch(vec: [u32; 4]) -> ([u32; 4], [u8; 4]) {
+        let mut quot = [0u32; 4];
+        let mut rem = [0u8; 4];
         let v = vld1q_u32(vec.as_ptr());
         let m = vdupq_n_u32(M_U32);
-        let mul = vmullq_u32(v, m);
-        let hi = vshrq_n_u64(mul, 32);
-        let q_vec = vreinterpretq_u32_u64(hi);
-        let mut quot = [0u32; 4];
-        quot[0] = vgetq_lane_u32(q_vec, 0);
-        quot[1] = vgetq_lane_u32(q_vec, 1);
-        quot[2] = vgetq_lane_u32(q_vec, 2);
-        quot[3] = vgetq_lane_u32(q_vec, 3);
-        let mut rem = [0u8; 4];
-        for i in 0..4 {
-            let qi = quot[i];
-            rem[i] = (vec[i].wrapping_sub(qi.wrapping_mul(BASE))) as u8;
-        }
+        // Low pair
+        let low_v = vget_low_u32(v);
+        let low_m = vget_low_u32(m);
+        let mul_low = vmull_u32(low_v, low_m);
+        let high_low = vshrq_n_u64(mul_low, 32);
+        let q_low = vreinterpretq_u32_u64(high_low);
+        quot[0] = vgetq_lane_u32(q_low, 0);
+        quot[1] = vgetq_lane_u32(q_low, 2);
+        rem[0] = (vec[0].wrapping_sub(quot[0].wrapping_mul(BASE))) as u8;
+        rem[1] = (vec[1].wrapping_sub(quot[1].wrapping_mul(BASE))) as u8;
+        // High pair
+        let high_v = vget_high_u32(v);
+        let high_m = vget_high_u32(m);
+        let mul_high = vmull_u32(high_v, high_m);
+        let high_high = vshrq_n_u64(mul_high, 32);
+        let q_high = vreinterpretq_u32_u64(high_high);
+        quot[2] = vgetq_lane_u32(q_high, 0);
+        quot[3] = vgetq_lane_u32(q_high, 2);
+        rem[2] = (vec[2].wrapping_sub(quot[2].wrapping_mul(BASE))) as u8;
+        rem[3] = (vec[3].wrapping_sub(quot[3].wrapping_mul(BASE))) as u8;
         (quot, rem)
     }
     /// Horner for decode: batch sum (acc * BASE + val * `BASEⁱ`) but per-lane.

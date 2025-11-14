@@ -97,7 +97,7 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     const N: usize = 8;
     const BASE_POW: u64 = 128_063_081_718_016u64; // 58^8
     let len = digits.len();
-    let num_chunks = (len + N - 1) / N;
+    let num_chunks = len.div_ceil(N);
     let mut num: Vec<u64> = Vec::new();
     let mut is_first = true;
     for chunk_idx in 0..num_chunks {
@@ -147,6 +147,7 @@ fn mul_big_u64(num: &mut Vec<u64>, small: u64) {
 }
 
 #[inline]
+#[allow(clippy::cast_possible_truncation)]
 fn add_small_u64(num: &mut Vec<u64>, small: u64) {
     if small == 0 {
         return;
@@ -155,7 +156,7 @@ fn add_small_u64(num: &mut Vec<u64>, small: u64) {
     let mut i = 0;
     while carry > 0 {
         if i == num.len() {
-            num.push(carry as u64);
+            num.push(carry);
             return;
         }
         let temp = u128::from(num[i]) + u128::from(carry);

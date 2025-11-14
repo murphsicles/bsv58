@@ -44,7 +44,7 @@ pub fn encode(input: &[u8]) -> String {
         }
         output.push(ALPHABET[r as usize]);
         // Trim leading (high) zero limbs
-        while let Some(&0) = num.last() {
+        while num.last() == Some(&0) {
             num.pop();
         }
     }

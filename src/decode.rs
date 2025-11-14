@@ -116,9 +116,9 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
             add_small_u64(&mut num, partial);
         }
     }
-    // Convert u64 high-first limbs to u8 BE bytes, trim leading zero bytes
+    // Convert u64 low-first limbs to u8 BE bytes, trim leading zero bytes
     let mut bytes = Vec::new();
-    for limb in num {
+    for &limb in num.iter().rev() {
         bytes.extend_from_slice(&limb.to_be_bytes());
     }
     // Trim leading zero bytes
@@ -134,19 +134,14 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
 
 #[inline]
 fn mul_big_u64(num: &mut Vec<u64>, small: u64) {
-    if small == 0 {
-        num.clear();
-        return;
-    }
     let mut carry = 0u128;
-    for limb in num.iter_mut().rev() {
+    for limb in num.iter_mut() {
         carry += u128::from(*limb) * u128::from(small);
         *limb = (carry & 0xFFFF_FFFF_FFFF_FFFFu128) as u64;
         carry >>= 64;
     }
     while carry > 0 {
-        let new_limb = (carry & 0xFFFF_FFFF_FFFF_FFFFu128) as u64;
-        num.insert(0, new_limb);
+        num.push((carry & 0xFFFF_FFFF_FFFF_FFFFu128) as u64);
         carry >>= 64;
     }
 }
@@ -157,16 +152,16 @@ fn add_small_u64(num: &mut Vec<u64>, small: u64) {
         return;
     }
     let mut carry = small;
-    let mut i = num.len();
+    let mut i = 0;
     while carry > 0 {
-        if i == 0 {
-            num.insert(0, carry as u64);
+        if i == num.len() {
+            num.push(carry as u64);
             return;
         }
-        i -= 1;
-        let prev = num[i];
-        num[i] = prev.wrapping_add(carry as u64);
-        carry = if num[i] < prev { 1u64 } else { 0u64 };
+        let temp = u128::from(num[i]) + u128::from(carry);
+        num[i] = temp as u64;
+        carry = (temp >> 64) as u64;
+        i += 1;
     }
 }
 

@@ -95,28 +95,22 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
 #[inline]
 fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     const N: usize = 8;
-    const BASE_POW: u64 = 128_063_081_718_016u64; // 58^8
     let len = digits.len();
     let num_chunks = len.div_ceil(N);
-    let mut num: Vec<u64> = Vec::new();
-    let mut is_first = true;
+    let mut num: Vec<u64> = vec![0u64; num_chunks];
+    let mut pos = len;
     for chunk_idx in 0..num_chunks {
-        let start = chunk_idx * N;
-        let end = (start + N).min(len);
-        let chunk = &digits[start..end];
+        let chunk_size = pos.min(N);
+        let chunk_start = pos.saturating_sub(chunk_size);
+        let chunk = &digits[chunk_start..pos];
         let mut partial = 0u64;
         for &v in chunk {
             partial = partial
                 .wrapping_mul(58)
                 .wrapping_add(u64::from(DIGIT_TO_VAL[v as usize]));
         }
-        if is_first {
-            num.push(partial);
-            is_first = false;
-        } else {
-            mul_big_u64(&mut num, BASE_POW);
-            add_small_u64(&mut num, partial);
-        }
+        num[chunk_idx] = partial;
+        pos = chunk_start;
     }
     // Convert u64 low-first limbs to u8 BE bytes, trim leading zero bytes
     let mut bytes = Vec::new();
@@ -132,40 +126,6 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     }
     output.extend_from_slice(&bytes);
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
-}
-
-#[inline]
-fn mul_big_u64(num: &mut Vec<u64>, small: u64) {
-    let mut carry = 0u128;
-    for limb in num.iter_mut() {
-        carry += u128::from(*limb) * u128::from(small);
-        *limb = (carry & 0xFFFF_FFFF_FFFF_FFFFu128) as u64;
-        carry >>= 64;
-    }
-    while carry > 0 {
-        num.push((carry & 0xFFFF_FFFF_FFFF_FFFFu128) as u64);
-        carry >>= 64;
-    }
-}
-
-#[inline]
-#[allow(clippy::cast_possible_truncation)]
-fn add_small_u64(num: &mut Vec<u64>, small: u64) {
-    if small == 0 {
-        return;
-    }
-    let mut carry = small;
-    let mut i = 0;
-    while carry > 0 {
-        if i == num.len() {
-            num.push(carry);
-            return;
-        }
-        let temp = u128::from(num[i]) + u128::from(carry);
-        num[i] = temp as u64;
-        carry = (temp >> 64) as u64;
-        i += 1;
-    }
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]

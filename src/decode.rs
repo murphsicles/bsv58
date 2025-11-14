@@ -97,9 +97,9 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     const N: usize = 8;
     let len = digits.len();
     let num_chunks = len.div_ceil(N);
-    let mut num: Vec<u64> = vec![0u64; num_chunks];
+    let mut partials = Vec::with_capacity(num_chunks);
     let mut pos = len;
-    for chunk_idx in 0..num_chunks {
+    for _ in 0..num_chunks {
         let chunk_size = pos.min(N);
         let chunk_start = pos.saturating_sub(chunk_size);
         let chunk = &digits[chunk_start..pos];
@@ -109,12 +109,12 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
                 .wrapping_mul(58)
                 .wrapping_add(u64::from(DIGIT_TO_VAL[v as usize]));
         }
-        num[chunk_idx] = partial;
+        partials.push(partial);
         pos = chunk_start;
     }
     // Convert u64 low-first limbs to u8 BE bytes, trim leading zero bytes
     let mut bytes = Vec::new();
-    for &limb in num.iter().rev() {
+    for &limb in partials.iter().rev() {
         bytes.extend_from_slice(&limb.to_be_bytes());
     }
     // Trim leading zero bytes

@@ -1,10 +1,14 @@
 //! Base58 encoding module for bsv58.
 //! Specialized for Bitcoin SV: Bitcoin alphabet, leading zero handling as '1's.
-//! Optimizations: u64 limbs (high first) for fewer ops; repeated divmod with u128 temp for correctness.
+//! Optimizations: u64 limbs (low first) for fewer ops; repeated divmod with u128 temp for correctness.
 //! Perf: O(n^2 / 8) scalar; SIMD-ready for batch divmod.
 use crate::ALPHABET;
 
-#[allow(clippy::cast_possible_truncation)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
 #[must_use]
 #[inline]
 pub fn encode(input: &[u8]) -> String {
@@ -16,39 +20,33 @@ pub fn encode(input: &[u8]) -> String {
     if non_zero.is_empty() {
         return "1".repeat(zeros);
     }
-    // Pack to u64 high-first limbs (high byte in high bits)
-    let mut num: Vec<u64> = Vec::new();
-    let mut i = 0;
-    while i < non_zero.len() {
-        let bytes_in_limb = (non_zero.len() - i).min(8usize);
+    let mut num: Vec<u64> = Vec::with_capacity(((non_zero.len() + 7) / 8) as usize);
+    let mut i = non_zero.len();
+    while i > 0 {
+        i -= 8;
+        if i < 0 {
+            i = 0;
+        }
+        let bytes_in_limb = non_zero.len() - i;
         let mut limb = 0u64;
-        let mut shift = 56u32;
-        for j in 0..bytes_in_limb {
-            limb |= u64::from(non_zero[i + j]) << shift;
-            shift -= 8;
+        let mut shift = 0u32;
+        for jj in 0..bytes_in_limb {
+            let byte_idx = i + (bytes_in_limb - 1 - jj);
+            limb |= u64::from(non_zero[byte_idx]) << shift;
+            shift += 8;
         }
         num.push(limb);
-        i += 8;
     }
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_precision_loss
-    )]
-    let mut output = Vec::with_capacity((non_zero.len() as f64 * 1.3652).ceil() as usize);
-    loop {
-        if num.iter().all(|&l| l == 0) {
-            break;
-        }
+    let mut output = Vec::with_capacity(((non_zero.len() as f64) * 1.3652).ceil() as usize);
+    while !num.is_empty() {
         let mut r: u128 = 0;
-        for limb in &mut num {
-            let temp = (r << 64) | u128::from(*limb);
-            *limb = (temp / 58) as u64;
+        for k in (0..num.len()).rev() {
+            let temp = (r << 64) | u128::from(num[k]);
+            num[k] = (temp / 58) as u64;
             r = temp % 58;
         }
         output.push(ALPHABET[r as usize]);
-        // Trim leading zero limbs (high end)
-        while num.last() == Some(&0) {
+        while let Some(&0) = num.last() {
             num.pop();
         }
     }

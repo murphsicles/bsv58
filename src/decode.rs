@@ -97,7 +97,7 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     const N: usize = 8;
     const BASE_POW: u64 = 128_063_081_718_016u64; // 58^8
     let len = digits.len();
-    let num_chunks = len.div_ceil(N);
+    let num_chunks = (len + N - 1) / N;
     let mut num: Vec<u64> = Vec::new();
     let mut is_first = true;
     for chunk_idx in 0..num_chunks {
@@ -106,9 +106,7 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
         let chunk = &digits[start..end];
         let mut partial = 0u64;
         for &v in chunk {
-            partial = partial
-                .wrapping_mul(58)
-                .wrapping_add(u64::from(DIGIT_TO_VAL[v as usize]));
+            partial = partial.wrapping_mul(58).wrapping_add(u64::from(DIGIT_TO_VAL[v as usize]));
         }
         if is_first {
             num.push(partial);
@@ -136,33 +134,39 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
 
 #[inline]
 fn mul_big_u64(num: &mut Vec<u64>, small: u64) {
+    if small == 0 {
+        num.clear();
+        return;
+    }
     let mut carry = 0u128;
-    for limb in num.iter_mut() {
+    for limb in num.iter_mut().rev() {
         carry += u128::from(*limb) * u128::from(small);
         *limb = (carry & 0xFFFF_FFFF_FFFF_FFFFu128) as u64;
         carry >>= 64;
     }
     while carry > 0 {
-        num.push((carry & 0xFFFF_FFFF_FFFF_FFFFu128) as u64);
+        let new_limb = (carry & 0xFFFF_FFFF_FFFF_FFFFu128) as u64;
+        num.insert(0, new_limb);
         carry >>= 64;
     }
 }
 
 #[inline]
-fn add_small_u64(num: &mut Vec<u64>, mut small: u64) {
+fn add_small_u64(num: &mut Vec<u64>, small: u64) {
     if small == 0 {
         return;
     }
-    let mut i = 0;
-    while small > 0 {
-        if i == num.len() {
-            num.push(small);
+    let mut carry = small;
+    let mut i = num.len();
+    while carry > 0 {
+        if i == 0 {
+            num.insert(0, carry as u64);
             return;
         }
+        i -= 1;
         let prev = num[i];
-        num[i] = prev.wrapping_add(small);
-        small = u64::from(num[i] < prev);
-        i += 1;
+        num[i] = prev.wrapping_add(carry as u64);
+        carry = if num[i] < prev { 1u64 } else { 0u64 };
     }
 }
 

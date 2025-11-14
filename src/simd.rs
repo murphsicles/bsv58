@@ -10,7 +10,7 @@ pub use self::dispatch::{divmod_batch, horner_batch};
 mod dispatch {
     #[cfg(target_arch = "aarch64")]
     use std::arch::aarch64::{
-        vdupq_n_u32, vgetq_lane_u32, vld1q_u32, vmull_u32, vreinterpretq_u32_u64, vshrq_n_u64,
+        vdupq_n_u32, vgetq_lane_u32, vld1q_u32, vmullq_u32, vreinterpretq_u32_u64, vshrq_n_u64,
     };
     const BASE: u32 = 58;
     const M_U32: u32 = 74_051_161;
@@ -22,7 +22,7 @@ mod dispatch {
         #[cfg(target_arch = "aarch64")]
         {
             if N == 4 && std::arch::is_aarch64_feature_detected!("neon") {
-                let vec4 = vec;
+                let vec4: [u32; 4] = vec.try_into().unwrap();
                 let (q4, r4) = unsafe { neon_divmod_batch(vec4) };
                 let mut quot = [0u32; N];
                 quot.copy_from_slice(&q4);
@@ -47,7 +47,7 @@ mod dispatch {
     unsafe fn neon_divmod_batch(vec: [u32; 4]) -> ([u32; 4], [u8; 4]) {
         let v = vld1q_u32(vec.as_ptr());
         let m = vdupq_n_u32(M_U32);
-        let mul = vmull_u32(v, m);
+        let mul = vmullq_u32(v, m);
         let hi = vshrq_n_u64(mul, 32);
         let q_vec = vreinterpretq_u32_u64(hi);
         let mut quot = [0u32; 4];

@@ -26,7 +26,7 @@ pub fn encode(input: &[u8]) -> String {
     while i < non_zero.len() {
         let bytes_in_limb = (non_zero.len() - i).min(8usize);
         let mut limb = 0u64;
-        let mut shift = ((bytes_in_limb - 1) as u32 * 8);
+        let mut shift = (bytes_in_limb - 1) as u32 * 8;
         for j in 0..bytes_in_limb {
             limb |= u64::from(non_zero[i + j]) << shift;
             shift -= 8;

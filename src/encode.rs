@@ -1,6 +1,6 @@
 //! Base58 encoding module for bsv58.
 //! Specialized for Bitcoin SV: Bitcoin alphabet, leading zero handling as '1's.
-//! Optimizations: u64 limbs (low first) for fewer ops; repeated divmod with u128 temp for correctness.
+//! Optimizations: u64 limbs (high first) for fewer ops; repeated divmod with u128 temp for correctness.
 //! Perf: O(n^2 / 8) scalar; SIMD-ready for batch divmod.
 use crate::ALPHABET;
 
@@ -20,30 +20,30 @@ pub fn encode(input: &[u8]) -> String {
     if non_zero.is_empty() {
         return "1".repeat(zeros);
     }
-    // Pack to u64 low-first limbs (low byte in low bits; BE value via rev pack)
+    // Pack to u64 high-first limbs (high byte in high bits)
     let mut num: Vec<u64> = Vec::new();
-    let mut i = non_zero.len();
-    while i > 0 {
+    let mut i = 0;
+    while i < non_zero.len() {
+        let bytes_in_limb = (non_zero.len() - i).min(8usize);
         let mut limb = 0u64;
-        let mut shift = 0u32;
-        let bytes_in_limb = i.min(8);
-        for _ in 0..bytes_in_limb {
-            i -= 1;
-            limb |= u64::from(non_zero[i]) << shift;
-            shift += 8;
+        let mut shift = ((bytes_in_limb - 1) as u32 * 8);
+        for j in 0..bytes_in_limb {
+            limb |= u64::from(non_zero[i + j]) << shift;
+            shift -= 8;
         }
         num.push(limb);
+        i += 8;
     }
     let mut output = Vec::with_capacity(((non_zero.len() as f64) * 1.3652).ceil() as usize);
     while !num.is_empty() {
         let mut r: u128 = 0;
-        for limb in num.iter_mut().rev() {
+        for limb in num.iter_mut() {
             let temp = (r << 64) | u128::from(*limb);
             *limb = (temp / 58) as u64;
             r = temp % 58;
         }
         output.push(ALPHABET[r as usize]);
-        // Trim leading (high) zero limbs
+        // Trim leading zero limbs (high end)
         while num.last() == Some(&0) {
             num.pop();
         }

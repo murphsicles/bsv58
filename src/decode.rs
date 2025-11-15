@@ -95,26 +95,30 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
 #[inline]
 fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     const N: usize = 8;
+    const BASE_POW: u64 = 58u64.pow(8);
     let len = digits.len();
     let num_chunks = len.div_ceil(N);
-    let mut partials = Vec::with_capacity(num_chunks);
-    let mut pos = len;
-    for _ in 0..num_chunks {
-        let chunk_size = pos.min(N);
-        let chunk_start = pos.saturating_sub(chunk_size);
-        let chunk = &digits[chunk_start..pos];
+    let mut num: Vec<u64> = Vec::new();
+    let mut is_first = true;
+    for chunk_idx in 0..num_chunks {
+        let start = chunk_idx * N;
+        let end = (start + N).min(len);
+        let chunk = &digits[start..end];
         let mut partial = 0u64;
         for &v in chunk {
-            partial = partial
-                .wrapping_mul(58)
-                .wrapping_add(u64::from(DIGIT_TO_VAL[v as usize]));
+            partial = partial * 58 + u64::from(DIGIT_TO_VAL[v as usize]);
         }
-        partials.push(partial);
-        pos = chunk_start;
+        if is_first {
+            num.push(partial);
+            is_first = false;
+        } else {
+            mul_big_u64(&mut num, BASE_POW);
+            add_small_u64(&mut num, partial);
+        }
     }
-    // Convert u64 low-first limbs to u8 BE bytes, trim leading zero bytes
+    // Convert u64 high-first limbs to u8 BE bytes, trim leading zero bytes
     let mut bytes = Vec::new();
-    for &limb in partials.iter().rev() {
+    for &limb in &num {
         bytes.extend_from_slice(&limb.to_be_bytes());
     }
     // Trim leading zero bytes
@@ -126,6 +130,39 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
     }
     output.extend_from_slice(&bytes);
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
+}
+
+#[inline]
+fn mul_big_u64(num: &mut Vec<u64>, small: u64) {
+    let mut carry = 0u128;
+    for limb in num.iter_mut().rev() {
+        let temp = u128::from(*limb) * u128::from(small) + carry;
+        *limb = temp as u64;
+        carry = temp >> 64;
+    }
+    while carry > 0 {
+        num.insert(0, carry as u64);
+        carry >>= 64;
+    }
+}
+
+#[inline]
+fn add_small_u64(num: &mut Vec<u64>, small: u64) {
+    if small == 0 {
+        return;
+    }
+    let mut carry = small;
+    let mut i = num.len();
+    while carry > 0 {
+        if i == 0 {
+            num.insert(0, carry as u64);
+            return;
+        }
+        i -= 1;
+        let prev = num[i];
+        num[i] = prev.wrapping_add(carry);
+        carry = u64::from(num[i] < prev);
+    }
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]

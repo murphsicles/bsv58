@@ -6,7 +6,7 @@ license-file = "LICENSE"
 description = "Ultra-fast Base58 codec for Bitcoin SV (SIMD x86/ARM)"
 repository = "https://github.com/murphsicles/bsv58"
 keywords = ["base58", "bitcoin", "bsv", "codec"]
-categories = ["cryptography::encoding"]
+categories = ["cryptography", "encoding"]
 readme = "README.md"
 
 [lib]

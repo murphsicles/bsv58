@@ -2,11 +2,12 @@
 name = "bsv58"
 version = "0.1.0"
 edition = "2024"
+license-file = "LICENSE"
 description = "Ultra-fast Base58 codec for Bitcoin SV (SIMD x86/ARM)"
-license = "Open BSV"
 repository = "https://github.com/murphsicles/bsv58"
 keywords = ["base58", "bitcoin", "bsv", "codec"]
 categories = ["cryptography::encoding"]
+readme = "README.md"
 
 [lib]
 name = "bsv58"

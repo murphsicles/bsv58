@@ -133,6 +133,7 @@ fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
 }
 
 #[inline]
+#[allow(clippy::cast_possible_truncation)]
 fn mul_big_u64(num: &mut Vec<u64>, small: u64) {
     let mut carry = 0u128;
     for limb in num.iter_mut().rev() {
@@ -147,6 +148,7 @@ fn mul_big_u64(num: &mut Vec<u64>, small: u64) {
 }
 
 #[inline]
+#[allow(clippy::cast_possible_truncation)]
 fn add_small_u64(num: &mut Vec<u64>, small: u64) {
     if small == 0 {
         return;
@@ -155,7 +157,7 @@ fn add_small_u64(num: &mut Vec<u64>, small: u64) {
     let mut i = num.len();
     while carry > 0 {
         if i == 0 {
-            num.insert(0, carry as u64);
+            num.insert(0, carry);
             return;
         }
         i -= 1;

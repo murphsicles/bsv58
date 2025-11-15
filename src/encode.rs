@@ -37,7 +37,7 @@ pub fn encode(input: &[u8]) -> String {
     let mut output = Vec::with_capacity(((non_zero.len() as f64) * 1.3652).ceil() as usize);
     while !num.is_empty() {
         let mut r: u128 = 0;
-        for limb in num.iter_mut() {
+        for limb in &mut num {
             let temp = (r << 64) | u128::from(*limb);
             *limb = (temp / 58) as u64;
             r = temp % 58;

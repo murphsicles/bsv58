@@ -1,7 +1,6 @@
 //! Base58 decoding module for bsv58.
 //! BSV-only: Bitcoin alphabet, optional double-SHA256 checksum validation.
-//! Optimizations: Precomp table for char->val, chunked Horner (N=8) for O(n) effective ops on large,
-//! u64 limbs for big int; arch-specific SIMD intrinsics (AVX2/NEON ~4x faster),
+//! Optimizations: Precomp table for char->val, arch-specific SIMD intrinsics (AVX2/NEON ~4x faster),
 //! scalar fallback. Runtime dispatch for x86/ARM.
 //! Perf: <4c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
 use crate::ALPHABET;
@@ -37,17 +36,17 @@ pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
 /// # Performance Notes
 /// - Capacity: ~0.733 * input len (log256(58)).
 /// - SIMD: AVX2 (8 digits x86), NEON (4 digits ARM); scalar fallback.
-#[allow(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    clippy::cast_precision_loss
-)]
 #[inline]
 pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, DecodeError> {
     if input.is_empty() {
         return Ok(vec![]);
     }
     let bytes = input.as_bytes();
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss
+    )]
     let cap = ((bytes.len() as f64 * 0.733).ceil() as usize).max(1);
     let mut output = Vec::with_capacity(cap);
     let zeros = bytes.iter().take_while(|&&b| b == b'1').count();
@@ -94,77 +93,39 @@ pub fn decode_full(input: &str, validate_checksum: bool) -> Result<Vec<u8>, Deco
 #[allow(clippy::cast_possible_truncation)]
 #[inline]
 fn decode_scalar(output: &mut Vec<u8>, digits: &[u8], zeros: usize) {
-    const N: usize = 8;
-    const BASE_POW: u64 = 58u64.pow(8);
-    let len = digits.len();
-    let num_chunks = len.div_ceil(N);
-    let mut num: Vec<u64> = Vec::new();
-    let mut is_first = true;
-    for chunk_idx in 0..num_chunks {
-        let start = chunk_idx * N;
-        let end = (start + N).min(len);
-        let chunk = &digits[start..end];
-        let mut partial = 0u64;
-        for &v in chunk {
-            partial = partial * 58 + u64::from(DIGIT_TO_VAL[v as usize]);
+    let mut num: Vec<u8> = Vec::new();
+    for &ch in digits {
+        let val = DIGIT_TO_VAL[ch as usize];
+        // Multiply current num by 58 (BE, low to high via rev)
+        let mut carry = 0u64;
+        for b in num.iter_mut().rev() {
+            let temp = u64::from(*b) * 58 + carry;
+            *b = (temp % 256) as u8;
+            carry = temp / 256;
         }
-        if is_first {
-            num.push(partial);
-            is_first = false;
-        } else {
-            mul_big_u64(&mut num, BASE_POW);
-            add_small_u64(&mut num, partial);
+        while carry > 0 {
+            num.insert(0, (carry % 256) as u8);
+            carry /= 256;
+        }
+        // Add val to low end (end of vector for BE)
+        let mut c = u64::from(val);
+        let mut pos = num.len();
+        while c > 0 {
+            if pos == 0 {
+                while c > 0 {
+                    num.insert(0, (c % 256) as u8);
+                    c /= 256;
+                }
+                break;
+            }
+            pos -= 1;
+            let temp = u64::from(num[pos]) + c;
+            num[pos] = (temp % 256) as u8;
+            c = temp / 256;
         }
     }
-    // Convert u64 high-first limbs to u8 BE bytes, trim leading zero bytes
-    let mut bytes = Vec::new();
-    for &limb in &num {
-        bytes.extend_from_slice(&limb.to_be_bytes());
-    }
-    // Trim leading zero bytes
-    if let Some(pos) = bytes.iter().position(|&b| b != 0) {
-        bytes.drain(..pos);
-    }
-    if bytes.is_empty() {
-        bytes.push(0u8);
-    }
-    output.extend_from_slice(&bytes);
+    output.append(&mut num);
     output.splice(0..0, std::iter::repeat_n(0u8, zeros));
-}
-
-#[inline]
-#[allow(clippy::cast_possible_truncation)]
-fn mul_big_u64(num: &mut Vec<u64>, small: u64) {
-    let mut carry = 0u128;
-    for limb in num.iter_mut().rev() {
-        let temp = u128::from(*limb) * u128::from(small) + carry;
-        *limb = temp as u64;
-        carry = temp >> 64;
-    }
-    while carry > 0 {
-        num.insert(0, carry as u64);
-        carry >>= 64;
-    }
-}
-
-#[inline]
-#[allow(clippy::cast_possible_truncation)]
-fn add_small_u64(num: &mut Vec<u64>, small: u64) {
-    if small == 0 {
-        return;
-    }
-    let mut carry = small;
-    let mut i = num.len();
-    while carry > 0 {
-        if i == 0 {
-            num.insert(0, carry);
-            return;
-        }
-        i -= 1;
-        let prev = num[i];
-        num[i] = prev.wrapping_add(carry);
-        carry = u64::from(num[i] < prev);
-    }
 }
 
 #[cfg(all(target_arch = "x86_64", feature = "simd"))]
@@ -229,6 +190,7 @@ const DIGIT_TO_VAL: [u8; 128] = {
 mod tests {
     use super::*;
     use hex_literal::hex;
+
     #[test]
     fn decode_known_no_checksum() {
         assert_eq!(decode(""), Ok(vec![]));
@@ -243,6 +205,7 @@ mod tests {
             Err(DecodeError::InvalidChar(4))
         ));
     }
+
     #[test]
     fn decode_with_checksum() {
         let addr = "1BitcoinEaterAddressDontSendf59kuE";
@@ -254,6 +217,7 @@ mod tests {
             Err(DecodeError::Checksum)
         ));
     }
+
     #[test]
     fn decode_length_error() {
         assert!(matches!(
@@ -261,10 +225,12 @@ mod tests {
             Err(DecodeError::InvalidLength)
         ));
     }
+
     #[test]
     fn simd_dispatch() {
         let _ = decode("Cn8eVZg");
     }
+
     #[test]
     fn simd_correctness() {
         // Smoke: Roundtrip long
@@ -273,6 +239,7 @@ mod tests {
         let dec = decode(&enc).unwrap();
         assert_eq!(dec, long.to_vec());
     }
+
     #[test]
     fn chunked_correctness() {
         // Test chunked vs original logic equivalence
@@ -281,6 +248,7 @@ mod tests {
         let dec = decode(input).unwrap();
         assert_eq!(dec, expected.to_vec());
     }
+
     #[test]
     fn large_decode() {
         let long = vec![42u8; 1024];

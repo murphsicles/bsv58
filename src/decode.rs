@@ -1,7 +1,7 @@
 //! Base58 decoding module for bsv58.
 //! BSV-only: Bitcoin alphabet, optional double-SHA256 checksum validation.
 //! Optimizations: Precomp table for char->val, arch-specific SIMD intrinsics (AVX2/NEON ~4x faster),
-//! scalar u64 fallback. Runtime dispatch for x86/ARM.
+//! scalar fallback. Runtime dispatch for x86/ARM.
 //! Perf: <4c/char on AVX2 (table lookup + fused *58 Horner reduce); exact carry-prop, no allocs in loop.
 use crate::ALPHABET;
 use sha2::{Digest, Sha256};
@@ -238,5 +238,22 @@ mod tests {
         let enc = crate::encode(&long);
         let dec = decode(&enc).unwrap();
         assert_eq!(dec, long.to_vec());
+    }
+
+    #[test]
+    fn chunked_correctness() {
+        // Test chunked vs original logic equivalence
+        let input = "111114VYJtj3yEDffZem7N3PkK563wkLZZ8RjKzcfY";
+        let expected = hex!("000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f");
+        let dec = decode(input).unwrap();
+        assert_eq!(dec, expected.to_vec());
+    }
+
+    #[test]
+    fn large_decode() {
+        let long = vec![42u8; 1024];
+        let enc = crate::encode(&long);
+        let dec = decode(&enc).unwrap();
+        assert_eq!(dec, long);
     }
 }

@@ -90,4 +90,12 @@ mod tests {
         let dec = crate::decode(&enc).unwrap();
         assert_eq!(dec, long);
     }
+    #[test]
+    fn wide_limbs_correctness() {
+        // Smoke large
+        let large = vec![42u8; 1024];
+        let enc = encode(&large);
+        let dec = crate::decode(&enc).unwrap();
+        assert_eq!(dec, large);
+    }
 }

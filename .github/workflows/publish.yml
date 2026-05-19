@@ -1,39 +1,26 @@
-name: Publish Crate
-
+# Publish — Zeta branch (main)
+# This branch contains pure Zeta code. Publishing to crates.io
+# is handled by the `rust` branch. See README.md for details.
+name: Publish
 on:
   push:
     tags:
       - 'v*'
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
-  publish:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write  # For potential future cargo login (not needed with token)
-
+  verify:
+    name: Verify Zeta Release
+    runs-on: ubuntu-24.04
     steps:
-    - uses: actions/checkout@v4
-
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: stable
-        components: clippy
-
-    - name: Cache Dependencies
-      uses: Swatinem/rust-cache@v2
-
-    - name: Run Clippy (pre-publish check)
-      run: cargo clippy -- -D warnings
-
-    - name: Run Tests (pre-publish check)
-      run: cargo test --verbose
-
-    - name: Publish to crates.io
-      env:
-        CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-      run: cargo publish
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Ensure tag is NOT on rust branch (Zeta releases on main only)
+        run: |
+          TAG_BRANCH=$(git branch -r --contains tags/${{ github.ref_name }} | head -1 || echo "none")
+          echo "Tag ${{ github.ref_name }} is on branch: $TAG_BRANCH"
+          if [[ "$TAG_BRANCH" == *"rust"* ]]; then
+            echo "ERROR: Rust crate tags should be pushed on the 'rust' branch, not 'main'."
+            exit 1
+          fi
+          echo "Zeta release ${{ github.ref_name }} verified."

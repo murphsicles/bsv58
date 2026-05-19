@@ -1,41 +1,15 @@
+# bsv58 — Zeta package metadata
+# Rust version is maintained on the `rust` branch for crates.io publishing.
+# This branch (`main`) contains the pure Zeta implementation.
+# See README.md for more info.
+
 [package]
 name = "bsv58"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license-file = "LICENSE"
-description = "Ultra-fast Base58 codec for Bitcoin SV (SIMD x86/ARM)"
+description = "Ultra-fast Base58 codec for Bitcoin SV — pure Zeta implementation"
 repository = "https://github.com/murphsicles/bsv58"
 keywords = ["base58", "bitcoin", "bsv", "codec"]
 categories = ["cryptography", "encoding"]
 readme = "README.md"
-
-[lib]
-name = "bsv58"
-path = "src/lib.rs"
-
-[dependencies]
-sha2 = "0.10.9"  # For BSV checksum
-
-[features]
-default = ["simd"]  # SIMD on by default for prod
-simd = []  # AVX2/NEON intrinsics (runtime-detected)
-
-[dev-dependencies]
-base58 = "0.2.0"  # Control baseline (slower, generic)
-bs58 = "0.5.1"  # Reference baseline (optimized target)
-criterion = { version = "0.7.0", features = ["html_reports"] }  # For benchmarking
-hex-literal = "1.1.0"  # For tests
-
-[[bench]]
-name = "bench"
-harness = false
-
-[profile.release]
-lto = "fat"
-codegen-units = 1
-panic = "abort"
-opt-level = 3
-overflow-checks = false  # Squeeze cycles
-
-[profile.bench]
-inherits = "release"

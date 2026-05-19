@@ -1,0 +1,224 @@
+// bsv58.z — Ultra-fast Base58 codec for Bitcoin SV
+// Bitcoin alphabet, leading-zero '1's, optional double-SHA256 checksum decode.
+// Pure Zeta implementation (scalar). No SIMD.
+//
+// Exports:
+//   encode(input: []u8) -> string
+//   decode(input: string) -> []u8
+//   decode_full(input: string, validate_checksum: bool) -> []u8
+//
+// Checksum validation (decode_full with validate_checksum=true) requires
+// sha256 which is a separate Zeta package — for now only raw decode is supported.
+
+// Bitcoin Base58 alphabet
+const ALPHABET: [u8; 58] = [
+    b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9',
+    b'A', b'B', b'C', b'D', b'E', b'F', b'G', b'H', b'J', b'K',
+    b'L', b'M', b'N', b'P', b'Q', b'R', b'S', b'T', b'U', b'V',
+    b'W', b'X', b'Y', b'Z',
+    b'a', b'b', b'c', b'd', b'e', b'f', b'g', b'h', b'i', b'j',
+    b'k', b'l', b'm', b'n', b'o', b'p', b'q', b'r', b's', b't',
+    b'u', b'v', b'w', b'x', b'y', b'z'
+];
+
+// Character-to-value lookup table (0-57 for valid chars, 255 for invalid)
+const DIGIT_TO_VAL: [u8; 128] = [
+    255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,
+    255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,
+    255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,
+    255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,
+    255,  0,  1,  2,  3,  4,  5,  6,  7,  8,255,255,255,255,255,255,
+    255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,
+    255,  9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+     24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+    40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55,
+    56, 57,255,255,255,255,255,255
+];
+
+// Encode bytes to Base58 string (Bitcoin alphabet)
+fn encode(input: []u8) -> string {
+    if len(input) == 0 {
+        return "";
+    }
+
+    // Count leading zeros
+    let mut zeros: i64 = 0;
+    while zeros < len(input) && input[zeros] == 0 {
+        zeros += 1;
+    }
+
+    if zeros == len(input) {
+        // All zeros — return that many '1's
+        let mut result: string = "";
+        let mut i: i64 = 0;
+        while i < zeros {
+            result += "1";
+            i += 1;
+        }
+        return result;
+    }
+
+    // Work on non-zero portion
+    let non_zero_len: i64 = len(input) - zeros;
+    let mut num: [u8] = [0; 256]; // Max output capacity
+    let mut num_len: i64 = 0;
+    let mut i: i64 = zeros;
+    while i < len(input) {
+        num[num_len] = input[i];
+        num_len += 1;
+        i += 1;
+    }
+
+    // Output buffer (max ~1.37x input)
+    let mut output: [u8; 128] = [0; 128];
+    let mut out_len: i64 = 0;
+
+    while num_len > 0 {
+        let mut remainder: u32 = 0;
+        let mut all_zero: bool = true;
+        let mut j: i64 = 0;
+
+        // Divide by 58
+        while j < num_len {
+            let temp: u32 = remainder * 256 + (num[j] as u32);
+            num[j] = (temp / 58) as u8;
+            remainder = temp % 58;
+            if num[j] != 0 {
+                all_zero = false;
+            }
+            j += 1;
+        }
+
+        output[out_len] = ALPHABET[remainder as i64];
+        out_len += 1;
+
+        if all_zero {
+            break;
+        }
+
+        // Trim leading zeros
+        let mut trim: i64 = 0;
+        while trim < num_len && num[trim] == 0 {
+            trim += 1;
+        }
+        if trim > 0 {
+            let mut k: i64 = 0;
+            while k + trim < num_len {
+                num[k] = num[k + trim];
+                k += 1;
+            }
+            num_len -= trim;
+        }
+    }
+
+    // Build result: leading '1's + reversed output
+    let mut result: string = "";
+    let mut z: i64 = 0;
+    while z < zeros {
+        result += "1";
+        z += 1;
+    }
+
+    // Output was written in reverse (LSB first), so iterate backwards
+    let mut r: i64 = out_len - 1;
+    while r >= 0 {
+        result += output[r] as char;
+        r -= 1;
+    }
+
+    return result;
+}
+
+// Decode Base58 string to bytes (no checksum)
+fn decode(input: string) -> []u8 {
+    return decode_full(input, false);
+}
+
+// Decode Base58 string to bytes, optionally validating checksum
+fn decode_full(input: string, validate_checksum: bool) -> []u8 {
+    let bytes: []u8 = input as []u8;
+    if len(bytes) == 0 {
+        return [];
+    }
+
+    // Count leading '1's (represent leading zeros)
+    let mut zeros: i64 = 0;
+    while zeros < len(bytes) && bytes[zeros] == b'1' {
+        zeros += 1;
+    }
+
+    let digits: []u8 = bytes[zeros..];
+
+    if len(digits) == 0 {
+        return [0; zeros as i64];
+    }
+
+    // Validate all characters
+    let mut i: i64 = 0;
+    while i < len(digits) {
+        let ch: u8 = digits[i];
+        if (ch as i64) >= 128 || DIGIT_TO_VAL[ch as i64] == 255 {
+            // Invalid character — return empty array on error
+            return [];
+        }
+        i += 1;
+    }
+
+    // Decode: convert from base58 to base256
+    let cap: i64 = ((len(digits) as f64) * 0.733) as i64;
+    let mut output: [u8; 256] = [0; 256];
+    let mut out_len: i64 = 0;
+
+    let mut j: i64 = 0;
+    while j < len(digits) {
+        let val: u32 = DIGIT_TO_VAL[digits[j] as i64] as u32;
+
+        // Multiply output by 58 and add val
+        let mut carry: u64 = val as u64;
+        let mut k: i64 = out_len - 1;
+        while k >= 0 {
+            let temp: u64 = (output[k] as u64) * 58 + carry;
+            output[k] = (temp & 0xFF) as u8;
+            carry = temp >> 8;
+            k -= 1;
+        }
+
+        // If there's remaining carry, insert at front
+        while carry > 0 {
+            // Shift all elements right by 1
+            let mut s: i64 = out_len;
+            while s > 0 {
+                output[s] = output[s - 1];
+                s -= 1;
+            }
+            output[0] = (carry & 0xFF) as u8;
+            out_len += 1;
+            carry >>= 8;
+        }
+
+        j += 1;
+    }
+
+    // Handle checksum validation
+    // NOTE: SHA256 not yet available in Zeta stdlib.
+    // Checksum validation will be added when sha256 module is transpiled.
+    _ = validate_checksum;
+
+    // Build result: leading zeros + decoded bytes
+    let total_len: i64 = zeros + out_len;
+    let mut result: [u8] = [0; total_len as i64];
+
+    let mut z: i64 = 0;
+    while z < zeros {
+        result[z] = 0;
+        z += 1;
+    }
+
+    let mut d: i64 = 0;
+    while d < out_len {
+        result[zeros + d] = output[d];
+        d += 1;
+    }
+
+    return result;
+}

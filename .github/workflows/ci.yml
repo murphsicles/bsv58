@@ -4,9 +4,9 @@
 name: CI
 on:
   push:
-    branches: [ "main", "dev" ]
+    branches: [ "main", "dev", "rust" ]
   pull_request:
-    branches: [ "main", "dev" ]
+    branches: [ "main", "dev", "rust" ]
   schedule:
     - cron: '0 0 * * 0' # Weekly Sunday UTC
 env:

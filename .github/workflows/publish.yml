@@ -13,10 +13,22 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write  # For potential future cargo login (not needed with token)
+      id-token: write
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Need full history to check which branch the tag is on
+
+    - name: Ensure tag is on rust branch
+      run: |
+        TAG_BRANCH=$(git branch -r --contains tags/${{ github.ref_name }} | head -1 || echo "none")
+        echo "Tag ${{ github.ref_name }} is on branch: $TAG_BRANCH"
+        if [[ "$TAG_BRANCH" != *"rust"* ]]; then
+          echo "Tag ${{ github.ref_name }} is NOT on the rust branch — refusing to publish Rust crate."
+          echo "Zeta releases should be published via the main branch."
+          exit 1
+        fi
 
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
